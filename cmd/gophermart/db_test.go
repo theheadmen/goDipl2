@@ -15,6 +15,8 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
+	"github.com/theheadmen/goDipl2/internal/models"
+	"github.com/theheadmen/goDipl2/internal/server"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
@@ -70,9 +72,9 @@ func TestLoyaltySystemWithTestContainer(t *testing.T) {
 	require.NoError(t, err)
 
 	// Setup loyalty system with real database
-	dataChan := make(chan Order)
-	ls := NewLoyaltySystem(db, dataChan, "http://localhost:8080")
-	err = ls.Initialize()
+	dataChan := make(chan models.Order)
+	ls := server.NewServerSystem(db, dataChan, "http://localhost:8080")
+	err = ls.DBInitialize()
 	require.NoError(t, err)
 
 	go func() {
@@ -95,16 +97,16 @@ func TestLoyaltySystemWithTestContainer(t *testing.T) {
 		name           string
 		cookie         *http.Cookie
 		orderNumber    string
-		user           User
-		existingOrder  Order
+		user           models.User
+		existingOrder  models.Order
 		expectedStatus int
 	}{
 		{
 			name:           "Valid order",
 			cookie:         &http.Cookie{Name: "session_token", Value: "test@example.com"},
 			orderNumber:    "3182649",
-			user:           User{Email: "test@example.com", Password: "password"},
-			existingOrder:  Order{Number: "3182649"},
+			user:           models.User{Email: "test@example.com", Password: "password"},
+			existingOrder:  models.Order{Number: "3182649"},
 			expectedStatus: http.StatusAccepted,
 		},
 		// Add more test cases as needed
@@ -142,10 +144,10 @@ func TestLoyaltySystemWithTestContainer(t *testing.T) {
 
 func TestLunh(t *testing.T) {
 	number := "3182649"
-	res := IsValidLuhn(number)
+	res := server.IsValidLuhn(number)
 	assert.Equal(t, true, res)
 
 	number = "11111111"
-	res = IsValidLuhn(number)
+	res = server.IsValidLuhn(number)
 	assert.Equal(t, false, res)
 }

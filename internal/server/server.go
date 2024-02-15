@@ -1,4 +1,4 @@
-package main
+package server
 
 import (
 	"context"
@@ -8,13 +8,52 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"time"
 
+	"github.com/gorilla/mux"
+	"github.com/theheadmen/goDipl2/internal/models"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
 
-func (ls *LoyaltySystem) RegisterUserHandler(w http.ResponseWriter, r *http.Request) {
-	var user User
+type ServerSystem struct {
+	DB       *gorm.DB
+	Datachan chan models.Order
+	BaseURL  string
+}
+
+func NewServerSystem(db *gorm.DB, datachan chan models.Order, baseURL string) *ServerSystem {
+	return &ServerSystem{DB: db, Datachan: datachan, BaseURL: baseURL}
+}
+
+func (ls *ServerSystem) DBInitialize() error {
+	return ls.DB.AutoMigrate(&models.User{}, &models.Order{}, &models.Withdrawal{})
+}
+
+func (ls *ServerSystem) MakeServer(serverAddr string) *http.Server {
+	r := mux.NewRouter()
+	r.HandleFunc("/api/user/register", ls.RegisterUserHandler).Methods("POST")
+	r.HandleFunc("/api/user/login", ls.LoginUserHandler).Methods("POST")
+	r.HandleFunc("/api/user/orders", ls.LoadOrderHandler).Methods("POST")
+	r.HandleFunc("/api/user/orders", ls.GetOrdersHandler).Methods("GET")
+	r.HandleFunc("/api/user/balance", ls.GetBalanceHandler).Methods("GET")
+	r.HandleFunc("/api/user/balance/withdraw", ls.WithdrawHandler).Methods("POST")
+	r.HandleFunc("/api/user/withdrawals", ls.GetWithdrawalsHandler).Methods("GET")
+
+	server := http.Server{
+		Addr:    serverAddr,
+		Handler: r,
+		// Good practice: enforce timeouts for servers you create!
+		WriteTimeout: 15 * time.Second,
+		ReadTimeout:  15 * time.Second,
+		IdleTimeout:  15 * time.Second,
+	}
+
+	return &server
+}
+
+func (ls *ServerSystem) RegisterUserHandler(w http.ResponseWriter, r *http.Request) {
+	var user models.User
 	err := json.NewDecoder(r.Body).Decode(&user)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -52,8 +91,8 @@ func (ls *LoyaltySystem) RegisterUserHandler(w http.ResponseWriter, r *http.Requ
 	w.WriteHeader(http.StatusOK)
 }
 
-func (ls *LoyaltySystem) LoginUserHandler(w http.ResponseWriter, r *http.Request) {
-	var reqUser User
+func (ls *ServerSystem) LoginUserHandler(w http.ResponseWriter, r *http.Request) {
+	var reqUser models.User
 	err := json.NewDecoder(r.Body).Decode(&reqUser)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -67,7 +106,7 @@ func (ls *LoyaltySystem) LoginUserHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	// Ищем пользователя в базе данных
-	var user User
+	var user models.User
 	result := ls.DB.Where("email = ?", reqUser.Email).First(&user).WithContext(r.Context())
 	if result.Error != nil {
 		http.Error(w, "Invalid login or password", http.StatusUnauthorized)
@@ -111,7 +150,7 @@ func IsValidLuhn(number string) bool {
 	return sum%10 == 0
 }
 
-func (ls *LoyaltySystem) LoadOrderHandler(w http.ResponseWriter, r *http.Request) {
+func (ls *ServerSystem) LoadOrderHandler(w http.ResponseWriter, r *http.Request) {
 	// Проверяем аутентификацию пользователя
 	cookie, err := r.Cookie("session_token")
 	if err != nil {
@@ -120,7 +159,7 @@ func (ls *LoyaltySystem) LoadOrderHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	// Ищем пользователя в базе данных
-	var user User
+	var user models.User
 	result := ls.DB.Where("email = ?", cookie.Value).First(&user).WithContext(r.Context())
 	if result.Error != nil {
 		http.Error(w, "User not found", http.StatusUnauthorized)
@@ -146,7 +185,7 @@ func (ls *LoyaltySystem) LoadOrderHandler(w http.ResponseWriter, r *http.Request
 	log.Printf("For user %d, get new order: %s\n", user.ID, orderNumber)
 
 	// Проверяем, не был ли загружен этот заказ другим пользователем
-	var existingOrder Order
+	var existingOrder models.Order
 	result = ls.DB.Where("number = ?", orderNumber).First(&existingOrder).WithContext(r.Context())
 	if result.Error == nil {
 		if existingOrder.UserID == user.ID {
@@ -161,7 +200,7 @@ func (ls *LoyaltySystem) LoadOrderHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	// Создаем новый заказ
-	order := Order{
+	order := models.Order{
 		Number: orderNumber,
 		UserID: user.ID,
 	}
@@ -180,7 +219,7 @@ func (ls *LoyaltySystem) LoadOrderHandler(w http.ResponseWriter, r *http.Request
 	w.WriteHeader(http.StatusAccepted)
 }
 
-func (ls *LoyaltySystem) GetOrdersHandler(w http.ResponseWriter, r *http.Request) {
+func (ls *ServerSystem) GetOrdersHandler(w http.ResponseWriter, r *http.Request) {
 	// Проверяем аутентификацию пользователя
 	cookie, err := r.Cookie("session_token")
 	if err != nil {
@@ -189,7 +228,7 @@ func (ls *LoyaltySystem) GetOrdersHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	// Ищем пользователя в базе данных
-	var user User
+	var user models.User
 	result := ls.DB.Where("email = ?", cookie.Value).First(&user).WithContext(r.Context())
 	if result.Error != nil {
 		http.Error(w, "User not found", http.StatusUnauthorized)
@@ -198,7 +237,7 @@ func (ls *LoyaltySystem) GetOrdersHandler(w http.ResponseWriter, r *http.Request
 	log.Printf("get orders call for %d\n", user.ID)
 
 	// Получаем список заказов пользователя
-	var orders []Order
+	var orders []models.Order
 	result = ls.DB.Where("user_id = ?", user.ID).Order("created_at").Find(&orders).WithContext(r.Context())
 	if result.Error != nil {
 		http.Error(w, result.Error.Error(), http.StatusInternalServerError)
@@ -212,9 +251,9 @@ func (ls *LoyaltySystem) GetOrdersHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	// Конвертируем список заказов в список ответов
-	orderResponses := make([]OrderResponse, len(orders))
+	orderResponses := make([]models.OrderResponse, len(orders))
 	for i, order := range orders {
-		orderResponses[i] = OrderResponse{
+		orderResponses[i] = models.OrderResponse{
 			Number:     order.Number,
 			Status:     order.Status,
 			UploadedAt: order.CreatedAt,
@@ -227,7 +266,7 @@ func (ls *LoyaltySystem) GetOrdersHandler(w http.ResponseWriter, r *http.Request
 	json.NewEncoder(w).Encode(orderResponses)
 }
 
-func (ls *LoyaltySystem) GetBalanceHandler(w http.ResponseWriter, r *http.Request) {
+func (ls *ServerSystem) GetBalanceHandler(w http.ResponseWriter, r *http.Request) {
 	// Проверяем аутентификацию пользователя
 	cookie, err := r.Cookie("session_token")
 	if err != nil {
@@ -236,7 +275,7 @@ func (ls *LoyaltySystem) GetBalanceHandler(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Ищем пользователя в базе данных
-	var user User
+	var user models.User
 	result := ls.DB.Where("email = ?", cookie.Value).First(&user).WithContext(r.Context())
 	if result.Error != nil {
 		http.Error(w, "User not found", http.StatusUnauthorized)
@@ -246,7 +285,7 @@ func (ls *LoyaltySystem) GetBalanceHandler(w http.ResponseWriter, r *http.Reques
 
 	// Получаем сумму использованных баллов
 	var withdrawn float64
-	result = ls.DB.Model(&Withdrawal{}).
+	result = ls.DB.Model(&models.Withdrawal{}).
 		Select("COALESCE(SUM(points), 0)").
 		Where("user_id = ?", user.ID).
 		Scan(&withdrawn).WithContext(r.Context())
@@ -257,7 +296,7 @@ func (ls *LoyaltySystem) GetBalanceHandler(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Формируем ответ
-	balanceResponse := BalanceResponse{
+	balanceResponse := models.BalanceResponse{
 		Current:   user.Balance,
 		Withdrawn: withdrawn,
 	}
@@ -267,7 +306,7 @@ func (ls *LoyaltySystem) GetBalanceHandler(w http.ResponseWriter, r *http.Reques
 	json.NewEncoder(w).Encode(balanceResponse)
 }
 
-func (ls *LoyaltySystem) WithdrawHandler(w http.ResponseWriter, r *http.Request) {
+func (ls *ServerSystem) WithdrawHandler(w http.ResponseWriter, r *http.Request) {
 	// Проверяем аутентификацию пользователя
 	cookie, err := r.Cookie("session_token")
 	if err != nil {
@@ -276,7 +315,7 @@ func (ls *LoyaltySystem) WithdrawHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Ищем пользователя в базе данных
-	var user User
+	var user models.User
 	result := ls.DB.Where("email = ?", cookie.Value).First(&user).WithContext(r.Context())
 	if result.Error != nil {
 		http.Error(w, "User not found", http.StatusUnauthorized)
@@ -285,7 +324,7 @@ func (ls *LoyaltySystem) WithdrawHandler(w http.ResponseWriter, r *http.Request)
 	log.Printf("withdraw call for %d\n", user.ID)
 
 	// Декодируем JSON-запрос
-	var withdrawRequest WithdrawRequest
+	var withdrawRequest models.WithdrawRequest
 	err = json.NewDecoder(r.Body).Decode(&withdrawRequest)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
@@ -302,7 +341,7 @@ func (ls *LoyaltySystem) WithdrawHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Создаем новый заказ на списание
-	order := Order{
+	order := models.Order{
 		Number: withdrawRequest.Order,
 		UserID: user.ID,
 		Status: "PROCESSED", // Предполагаем, что списание сразу обрабатывается
@@ -315,7 +354,7 @@ func (ls *LoyaltySystem) WithdrawHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	// Создаем списание
-	withdrawal := Withdrawal{
+	withdrawal := models.Withdrawal{
 		Points: withdrawRequest.Sum,
 		UserID: user.ID,
 		Number: withdrawRequest.Order,
@@ -338,7 +377,7 @@ func (ls *LoyaltySystem) WithdrawHandler(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusOK)
 }
 
-func (ls *LoyaltySystem) GetWithdrawalsHandler(w http.ResponseWriter, r *http.Request) {
+func (ls *ServerSystem) GetWithdrawalsHandler(w http.ResponseWriter, r *http.Request) {
 	// Проверяем аутентификацию пользователя
 	cookie, err := r.Cookie("session_token")
 	if err != nil {
@@ -347,7 +386,7 @@ func (ls *LoyaltySystem) GetWithdrawalsHandler(w http.ResponseWriter, r *http.Re
 	}
 
 	// Ищем пользователя в базе данных
-	var user User
+	var user models.User
 	result := ls.DB.Where("email = ?", cookie.Value).First(&user).WithContext(r.Context())
 	if result.Error != nil {
 		http.Error(w, "User not found", http.StatusUnauthorized)
@@ -356,7 +395,7 @@ func (ls *LoyaltySystem) GetWithdrawalsHandler(w http.ResponseWriter, r *http.Re
 	log.Printf("get withdraw call for %d\n", user.ID)
 
 	// Получаем список выводов средств пользователя
-	var withdrawals []Withdrawal
+	var withdrawals []models.Withdrawal
 	result = ls.DB.Where("user_id = ? AND points > 0", user.ID).Order("created_at").Find(&withdrawals).WithContext(r.Context())
 	if result.Error != nil {
 		http.Error(w, result.Error.Error(), http.StatusInternalServerError)
@@ -370,9 +409,9 @@ func (ls *LoyaltySystem) GetWithdrawalsHandler(w http.ResponseWriter, r *http.Re
 	}
 
 	// Конвертируем список выводов в список ответов
-	withdrawalResponses := make([]WithdrawalResponse, len(withdrawals))
+	withdrawalResponses := make([]models.WithdrawalResponse, len(withdrawals))
 	for i, withdrawal := range withdrawals {
-		withdrawalResponses[i] = WithdrawalResponse{
+		withdrawalResponses[i] = models.WithdrawalResponse{
 			Order:       withdrawal.Number,
 			Sum:         withdrawal.Points,
 			ProcessedAt: withdrawal.CreatedAt,
@@ -384,7 +423,7 @@ func (ls *LoyaltySystem) GetWithdrawalsHandler(w http.ResponseWriter, r *http.Re
 	json.NewEncoder(w).Encode(withdrawalResponses)
 }
 
-func fetchOrderInfo(db *gorm.DB, ord *Order, baseURL string, ctx context.Context) error {
+func FetchOrderInfo(db *gorm.DB, ord *models.Order, baseURL string, ctx context.Context) error {
 	// Формируем URL запроса
 	url := fmt.Sprintf("%s/api/orders/%s", baseURL, ord.Number)
 	log.Printf("Try to fetch order: %s by url %s\n", ord.Number, url)
@@ -422,7 +461,7 @@ func fetchOrderInfo(db *gorm.DB, ord *Order, baseURL string, ctx context.Context
 	}
 
 	// Декодируем JSON-ответ в структуру AccrualResponse
-	var orderResponse AccrualResponse
+	var orderResponse models.AccrualResponse
 	err = json.Unmarshal(body, &orderResponse)
 	if err != nil {
 		invalidJSON := string(body)
@@ -441,7 +480,7 @@ func fetchOrderInfo(db *gorm.DB, ord *Order, baseURL string, ctx context.Context
 
 	// Если Accrual не пустое, обновляем Balance у User
 	if orderResponse.Accrual > 0 {
-		var user User
+		var user models.User
 		err = db.First(&user, ord.UserID).WithContext(ctx).Error
 		if err != nil {
 			return fmt.Errorf("ошибка при поиске пользователя: %w", err)
@@ -466,7 +505,7 @@ func fetchOrderInfo(db *gorm.DB, ord *Order, baseURL string, ctx context.Context
 }
 
 func ProcessOrders(db *gorm.DB, baseURL string, ctx context.Context) {
-	var orders []Order
+	var orders []models.Order
 	// берем все заказы которые еще ждут выполнения
 	result := db.Where("status = 'REGISTERED' OR status = 'PROCESSING'").Find(&orders).WithContext(ctx)
 	if result.Error != nil {
@@ -475,7 +514,7 @@ func ProcessOrders(db *gorm.DB, baseURL string, ctx context.Context) {
 		for i := 0; i < len(orders); i++ {
 			// и проверяем каждый
 			ord := orders[i]
-			err := fetchOrderInfo(db, &ord, baseURL, ctx)
+			err := FetchOrderInfo(db, &ord, baseURL, ctx)
 			if err != nil {
 				fmt.Printf("Ошибка при обработке заказа %s: %+v\n", ord.Number, err)
 			}
