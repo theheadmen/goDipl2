@@ -12,7 +12,7 @@ type DBConnector struct {
 	DB *gorm.DB
 }
 
-func OpenDbConnect(dsn string) (*DBConnector, error) {
+func OpenDBConnect(dsn string) (*DBConnector, error) {
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 	return &DBConnector{DB: db}, err
 }

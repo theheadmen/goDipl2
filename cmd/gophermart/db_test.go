@@ -67,7 +67,7 @@ func TestLoyaltySystemWithTestContainer(t *testing.T) {
 	// host=localhost port=5432 user=postgres password=example dbname=godb sslmode=disable
 	// Setup real database connection
 	dsn := fmt.Sprintf("host=%s port=%s user=postgres password=example dbname=godb sslmode=disable", host, port.Port())
-	db, err := dbconnector.OpenDbConnect(dsn)
+	db, err := dbconnector.OpenDBConnect(dsn)
 	require.NoError(t, err)
 	err = db.DBInitialize()
 	require.NoError(t, err)

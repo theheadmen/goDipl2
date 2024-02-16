@@ -22,7 +22,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	db, err := dbconnector.OpenDbConnect(configStore.FlagDatabase)
+	db, err := dbconnector.OpenDBConnect(configStore.FlagDatabase)
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}

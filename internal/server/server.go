@@ -402,6 +402,7 @@ func (ls *ServerSystem) GetWithdrawalsHandler(w http.ResponseWriter, r *http.Req
 	// Конвертируем список выводов в список ответов
 	withdrawalResponses := make([]models.WithdrawalResponse, len(withdrawals))
 	for i, withdrawal := range withdrawals {
+		log.Printf("get withdrawal with number %s, points %f\n", withdrawal.Number, withdrawal.Points)
 		withdrawalResponses[i] = models.WithdrawalResponse{
 			Order:       withdrawal.Number,
 			Sum:         withdrawal.Points,
