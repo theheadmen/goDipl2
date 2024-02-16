@@ -66,14 +66,14 @@ func (dbConnector *DBConnector) GetOrdersByUserID(userID uint, orders *[]models.
 	return result.Error
 }
 
-func (dbConnector *DBConnector) GetSumOfWithdrawalByUserID(userID uint, withdrawn *float64, ctx context.Context) error {
+/*func (dbConnector *DBConnector) GetSumOfWithdrawalByUserID(userID uint, withdrawn *float64, ctx context.Context) error {
 	result := dbConnector.DB.Model(&models.Withdrawal{}).
 		Select("COALESCE(SUM(points), 0)").
 		Where("user_id = ?", userID).
 		Scan(&withdrawn).WithContext(ctx)
 
 	return result.Error
-}
+}*/
 
 func (dbConnector *DBConnector) AddWithdrawal(withdrawal *models.Withdrawal, ctx context.Context) error {
 	result := dbConnector.DB.Create(&withdrawal).WithContext(ctx)
