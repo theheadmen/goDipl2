@@ -15,10 +15,9 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
+	"github.com/theheadmen/goDipl2/internal/dbconnector"
 	"github.com/theheadmen/goDipl2/internal/models"
 	"github.com/theheadmen/goDipl2/internal/server"
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
 )
 
 type Config struct {
@@ -41,7 +40,7 @@ func TestLoyaltySystemWithTestContainer(t *testing.T) {
 		DBName:   "godb",
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	postgresContainer, err := tcpostgres.RunContainer(ctx,
@@ -68,14 +67,14 @@ func TestLoyaltySystemWithTestContainer(t *testing.T) {
 	// host=localhost port=5432 user=postgres password=example dbname=godb sslmode=disable
 	// Setup real database connection
 	dsn := fmt.Sprintf("host=%s port=%s user=postgres password=example dbname=godb sslmode=disable", host, port.Port())
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	db, err := dbconnector.OpenDbConnect(dsn)
+	require.NoError(t, err)
+	err = db.DBInitialize()
 	require.NoError(t, err)
 
 	// Setup loyalty system with real database
 	dataChan := make(chan models.Order)
 	ls := server.NewServerSystem(db, dataChan, "http://localhost:8080")
-	err = ls.DBInitialize()
-	require.NoError(t, err)
 
 	go func() {
 		for {
@@ -115,7 +114,8 @@ func TestLoyaltySystemWithTestContainer(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// Setup database with test data
-			db.Create(&tc.user)
+			err = db.AddUser(&tc.user, ctx)
+			require.NoError(t, err)
 			//db.Create(&tc.existingOrder)
 
 			// Create request
@@ -134,7 +134,7 @@ func TestLoyaltySystemWithTestContainer(t *testing.T) {
 			assert.Equal(t, tc.expectedStatus, rr.Code)
 
 			// Clean up test data
-			db.Delete(&tc.user)
+			db.DeleteUser(&tc.user, ctx)
 			//db.Delete(&tc.existingOrder)
 
 			// Add more assertions as needed

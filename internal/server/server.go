@@ -1,9 +1,7 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -11,23 +9,19 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/theheadmen/goDipl2/internal/dbconnector"
 	"github.com/theheadmen/goDipl2/internal/models"
 	"golang.org/x/crypto/bcrypt"
-	"gorm.io/gorm"
 )
 
 type ServerSystem struct {
-	DB       *gorm.DB
+	DB       *dbconnector.DBConnector
 	Datachan chan models.Order
 	BaseURL  string
 }
 
-func NewServerSystem(db *gorm.DB, datachan chan models.Order, baseURL string) *ServerSystem {
+func NewServerSystem(db *dbconnector.DBConnector, datachan chan models.Order, baseURL string) *ServerSystem {
 	return &ServerSystem{DB: db, Datachan: datachan, BaseURL: baseURL}
-}
-
-func (ls *ServerSystem) DBInitialize() error {
-	return ls.DB.AutoMigrate(&models.User{}, &models.Order{}, &models.Withdrawal{})
 }
 
 func (ls *ServerSystem) MakeServer(serverAddr string) *http.Server {
@@ -35,7 +29,7 @@ func (ls *ServerSystem) MakeServer(serverAddr string) *http.Server {
 	r.HandleFunc("/api/user/register", ls.RegisterUserHandler).Methods("POST")
 	r.HandleFunc("/api/user/login", ls.LoginUserHandler).Methods("POST")
 	r.HandleFunc("/api/user/orders", ls.LoadOrderHandler).Methods("POST")
-	r.HandleFunc("/api/user/orders", ls.GetOrdersHandler).Methods("GET")
+	r.HandleFunc("/api/user/orders", ls.GetOrderHandler).Methods("GET")
 	r.HandleFunc("/api/user/balance", ls.GetBalanceHandler).Methods("GET")
 	r.HandleFunc("/api/user/balance/withdraw", ls.WithdrawHandler).Methods("POST")
 	r.HandleFunc("/api/user/withdrawals", ls.GetWithdrawalsHandler).Methods("GET")
@@ -75,9 +69,9 @@ func (ls *ServerSystem) RegisterUserHandler(w http.ResponseWriter, r *http.Reque
 	user.Password = string(hashedPassword)
 
 	// Сохраняем пользователя в базе данных
-	result := ls.DB.Create(&user).WithContext(r.Context())
-	if result.Error != nil {
-		http.Error(w, result.Error.Error(), http.StatusConflict)
+	err = ls.DB.AddUser(&user, r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}
 
@@ -107,8 +101,8 @@ func (ls *ServerSystem) LoginUserHandler(w http.ResponseWriter, r *http.Request)
 
 	// Ищем пользователя в базе данных
 	var user models.User
-	result := ls.DB.Where("email = ?", reqUser.Email).First(&user).WithContext(r.Context())
-	if result.Error != nil {
+	err = ls.DB.GetUserByEmail(reqUser.Email, &user, r.Context())
+	if err != nil {
 		http.Error(w, "Invalid login or password", http.StatusUnauthorized)
 		return
 	}
@@ -160,8 +154,8 @@ func (ls *ServerSystem) LoadOrderHandler(w http.ResponseWriter, r *http.Request)
 
 	// Ищем пользователя в базе данных
 	var user models.User
-	result := ls.DB.Where("email = ?", cookie.Value).First(&user).WithContext(r.Context())
-	if result.Error != nil {
+	err = ls.DB.GetUserByEmail(cookie.Value, &user, r.Context())
+	if err != nil {
 		http.Error(w, "User not found", http.StatusUnauthorized)
 		return
 	}
@@ -186,8 +180,8 @@ func (ls *ServerSystem) LoadOrderHandler(w http.ResponseWriter, r *http.Request)
 
 	// Проверяем, не был ли загружен этот заказ другим пользователем
 	var existingOrder models.Order
-	result = ls.DB.Where("number = ?", orderNumber).First(&existingOrder).WithContext(r.Context())
-	if result.Error == nil {
+	err = ls.DB.GetOrderByNumber(orderNumber, &existingOrder, r.Context())
+	if err == nil {
 		if existingOrder.UserID == user.ID {
 			log.Printf("For user %d, we already have order: %s\n", user.ID, orderNumber)
 			w.WriteHeader(http.StatusOK)
@@ -206,9 +200,9 @@ func (ls *ServerSystem) LoadOrderHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Сохраняем заказ в базе данных
-	result = ls.DB.Create(&order).WithContext(r.Context())
-	if result.Error != nil {
-		http.Error(w, result.Error.Error(), http.StatusInternalServerError)
+	err = ls.DB.AddOrder(&order, r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	// отправляем заказ в канал на обработку
@@ -219,7 +213,7 @@ func (ls *ServerSystem) LoadOrderHandler(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusAccepted)
 }
 
-func (ls *ServerSystem) GetOrdersHandler(w http.ResponseWriter, r *http.Request) {
+func (ls *ServerSystem) GetOrderHandler(w http.ResponseWriter, r *http.Request) {
 	// Проверяем аутентификацию пользователя
 	cookie, err := r.Cookie("session_token")
 	if err != nil {
@@ -229,8 +223,8 @@ func (ls *ServerSystem) GetOrdersHandler(w http.ResponseWriter, r *http.Request)
 
 	// Ищем пользователя в базе данных
 	var user models.User
-	result := ls.DB.Where("email = ?", cookie.Value).First(&user).WithContext(r.Context())
-	if result.Error != nil {
+	err = ls.DB.GetUserByEmail(cookie.Value, &user, r.Context())
+	if err != nil {
 		http.Error(w, "User not found", http.StatusUnauthorized)
 		return
 	}
@@ -238,9 +232,9 @@ func (ls *ServerSystem) GetOrdersHandler(w http.ResponseWriter, r *http.Request)
 
 	// Получаем список заказов пользователя
 	var orders []models.Order
-	result = ls.DB.Where("user_id = ?", user.ID).Order("created_at").Find(&orders).WithContext(r.Context())
-	if result.Error != nil {
-		http.Error(w, result.Error.Error(), http.StatusInternalServerError)
+	err = ls.DB.GetOrdersByUserID(user.ID, &orders, r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -276,8 +270,8 @@ func (ls *ServerSystem) GetBalanceHandler(w http.ResponseWriter, r *http.Request
 
 	// Ищем пользователя в базе данных
 	var user models.User
-	result := ls.DB.Where("email = ?", cookie.Value).First(&user).WithContext(r.Context())
-	if result.Error != nil {
+	err = ls.DB.GetUserByEmail(cookie.Value, &user, r.Context())
+	if err != nil {
 		http.Error(w, "User not found", http.StatusUnauthorized)
 		return
 	}
@@ -285,13 +279,10 @@ func (ls *ServerSystem) GetBalanceHandler(w http.ResponseWriter, r *http.Request
 
 	// Получаем сумму использованных баллов
 	var withdrawn float64
-	result = ls.DB.Model(&models.Withdrawal{}).
-		Select("COALESCE(SUM(points), 0)").
-		Where("user_id = ?", user.ID).
-		Scan(&withdrawn).WithContext(r.Context())
+	err = ls.DB.GetSumOfWithdrawalByUserID(user.ID, &withdrawn, r.Context())
 
-	if result.Error != nil {
-		http.Error(w, result.Error.Error(), http.StatusInternalServerError)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -316,8 +307,8 @@ func (ls *ServerSystem) WithdrawHandler(w http.ResponseWriter, r *http.Request) 
 
 	// Ищем пользователя в базе данных
 	var user models.User
-	result := ls.DB.Where("email = ?", cookie.Value).First(&user).WithContext(r.Context())
-	if result.Error != nil {
+	err = ls.DB.GetUserByEmail(cookie.Value, &user, r.Context())
+	if err != nil {
 		http.Error(w, "User not found", http.StatusUnauthorized)
 		return
 	}
@@ -348,9 +339,9 @@ func (ls *ServerSystem) WithdrawHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Сохраняем заказ в базе данных
-	result = ls.DB.Create(&order).WithContext(r.Context())
-	if result.Error != nil {
-		http.Error(w, result.Error.Error(), http.StatusInternalServerError)
+	err = ls.DB.AddOrder(&order, r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	// Создаем списание
@@ -360,17 +351,17 @@ func (ls *ServerSystem) WithdrawHandler(w http.ResponseWriter, r *http.Request) 
 		Number: withdrawRequest.Order,
 	}
 	// Сохраняем списание в базе данных
-	result = ls.DB.Create(&withdrawal).WithContext(r.Context())
-	if result.Error != nil {
-		http.Error(w, result.Error.Error(), http.StatusInternalServerError)
+	err = ls.DB.AddWithdrawal(&withdrawal, r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	// Обновляем баланс пользователя
 	user.Balance -= withdrawRequest.Sum
-	result = ls.DB.Save(&user).WithContext(r.Context())
-	if result.Error != nil {
-		http.Error(w, result.Error.Error(), http.StatusInternalServerError)
+	err = ls.DB.UpdateUser(&user, r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -387,8 +378,8 @@ func (ls *ServerSystem) GetWithdrawalsHandler(w http.ResponseWriter, r *http.Req
 
 	// Ищем пользователя в базе данных
 	var user models.User
-	result := ls.DB.Where("email = ?", cookie.Value).First(&user).WithContext(r.Context())
-	if result.Error != nil {
+	err = ls.DB.GetUserByEmail(cookie.Value, &user, r.Context())
+	if err != nil {
 		http.Error(w, "User not found", http.StatusUnauthorized)
 		return
 	}
@@ -396,9 +387,9 @@ func (ls *ServerSystem) GetWithdrawalsHandler(w http.ResponseWriter, r *http.Req
 
 	// Получаем список выводов средств пользователя
 	var withdrawals []models.Withdrawal
-	result = ls.DB.Where("user_id = ? AND points > 0", user.ID).Order("created_at").Find(&withdrawals).WithContext(r.Context())
-	if result.Error != nil {
-		http.Error(w, result.Error.Error(), http.StatusInternalServerError)
+	err = ls.DB.GetAddWithdrawalsByUserID(user.ID, &withdrawals, r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -421,103 +412,4 @@ func (ls *ServerSystem) GetWithdrawalsHandler(w http.ResponseWriter, r *http.Req
 	// Возвращаем список выводов в формате JSON
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(withdrawalResponses)
-}
-
-func FetchOrderInfo(db *gorm.DB, ord *models.Order, baseURL string, ctx context.Context) error {
-	// Формируем URL запроса
-	url := fmt.Sprintf("%s/api/orders/%s", baseURL, ord.Number)
-	log.Printf("Try to fetch order: %s by url %s\n", ord.Number, url)
-
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return fmt.Errorf("ошибка при составлении запроса: %w", err)
-	}
-
-	req = req.WithContext(ctx)
-	// Отправляем GET-запрос
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("ошибка при отправке запроса: %w", err)
-	}
-	defer resp.Body.Close()
-
-	// Проверяем код ответа
-	if resp.StatusCode == http.StatusTooManyRequests {
-		return fmt.Errorf("превышено количество запросов к сервису")
-	}
-
-	if resp.StatusCode == http.StatusInternalServerError {
-		return fmt.Errorf("внутренняя ошибка сервера")
-	}
-
-	if resp.StatusCode == http.StatusNoContent {
-		return fmt.Errorf("такого order нет для сервиса")
-	}
-
-	// Читаем тело ответа
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("ошибка при чтении тела ответа: %w", err)
-	}
-
-	// Декодируем JSON-ответ в структуру AccrualResponse
-	var orderResponse models.AccrualResponse
-	err = json.Unmarshal(body, &orderResponse)
-	if err != nil {
-		invalidJSON := string(body)
-		return fmt.Errorf("ошибка при декодировании JSON: %w. Неправильный JSON: %s. Код ответа %d", err, invalidJSON, resp.StatusCode)
-	}
-	log.Printf("We get status %s and accrual %f\n", orderResponse.Status, orderResponse.Accrual)
-
-	// Обновляем поля в Ord
-	ord.Status = orderResponse.Status
-	ord.Points = orderResponse.Accrual
-	// Обновляем запись в базе данных
-	err = db.Save(ord).WithContext(ctx).Error
-	if err != nil {
-		return fmt.Errorf("ошибка при обновлении записи в базе данных: %w", err)
-	}
-
-	// Если Accrual не пустое, обновляем Balance у User
-	if orderResponse.Accrual > 0 {
-		var user models.User
-		err = db.First(&user, ord.UserID).WithContext(ctx).Error
-		if err != nil {
-			return fmt.Errorf("ошибка при поиске пользователя: %w", err)
-		}
-
-		// Обновляем Balance
-		user.Balance += float64(orderResponse.Accrual)
-
-		// Обновляем запись пользователя в базе данных
-		err = db.Save(&user).WithContext(ctx).Error
-		if err != nil {
-			return fmt.Errorf("ошибка при обновлении баланса пользователя: %w", err)
-		}
-		log.Printf("User %d now have %f\n", ord.UserID, user.Balance)
-	}
-
-	if ord.Status == "INVALID" || ord.Status == "PROCESSED" {
-		return nil
-	}
-
-	return nil
-}
-
-func ProcessOrders(db *gorm.DB, baseURL string, ctx context.Context) {
-	var orders []models.Order
-	// берем все заказы которые еще ждут выполнения
-	result := db.Where("status = 'REGISTERED' OR status = 'PROCESSING'").Find(&orders).WithContext(ctx)
-	if result.Error != nil {
-		fmt.Printf("ошибка при запросе ORDERS из бд: %+v", result.Error)
-	} else {
-		for i := 0; i < len(orders); i++ {
-			// и проверяем каждый
-			ord := orders[i]
-			err := FetchOrderInfo(db, &ord, baseURL, ctx)
-			if err != nil {
-				fmt.Printf("Ошибка при обработке заказа %s: %+v\n", ord.Number, err)
-			}
-		}
-	}
 }

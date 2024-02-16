@@ -9,11 +9,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/theheadmen/goDipl2/internal/dbconnector"
 	"github.com/theheadmen/goDipl2/internal/models"
 	"github.com/theheadmen/goDipl2/internal/server"
 	"github.com/theheadmen/goDipl2/internal/serverconfig"
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
 )
 
 func main() {
@@ -23,19 +22,18 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	dsn := configStore.FlagDatabase
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	db, err := dbconnector.OpenDbConnect(configStore.FlagDatabase)
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
+	}
+	if err := db.DBInitialize(); err != nil {
+		log.Fatalf("Failed to initialize database: %v", err)
 	}
 
 	// Канал для получения данных
 	dataChan := make(chan models.Order)
 
 	ls := server.NewServerSystem(db, dataChan, configStore.FlagAccrual)
-	if err := ls.DBInitialize(); err != nil {
-		log.Fatalf("Failed to initialize database: %v", err)
-	}
 
 	srv := ls.MakeServer(configStore.FlagRunAddr)
 
