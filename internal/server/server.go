@@ -5,7 +5,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -20,8 +19,10 @@ type ServerSystem struct {
 	BaseURL  string
 }
 
-func NewServerSystem(db *dbconnector.DBConnector, datachan chan models.Order, baseURL string) *ServerSystem {
-	return &ServerSystem{DB: db, Datachan: datachan, BaseURL: baseURL}
+func NewServerSystem(db *dbconnector.DBConnector, baseURL string) *ServerSystem {
+	// Канал для получения данных
+	dataChan := make(chan models.Order)
+	return &ServerSystem{DB: db, Datachan: dataChan, BaseURL: baseURL}
 }
 
 func (ls *ServerSystem) MakeServer(serverAddr string) *http.Server {
@@ -122,26 +123,6 @@ func (ls *ServerSystem) LoginUserHandler(w http.ResponseWriter, r *http.Request)
 	})
 
 	w.WriteHeader(http.StatusOK)
-}
-
-func IsValidLuhn(number string) bool {
-	digits := len(number)
-	parity := digits % 2
-	sum := 0
-	for i := 0; i < digits; i++ {
-		digit, err := strconv.Atoi(string(number[i]))
-		if err != nil {
-			return false // Если символ не является цифрой, возвращаем false
-		}
-		if i%2 == parity {
-			digit *= 2
-			if digit > 9 {
-				digit -= 9
-			}
-		}
-		sum += digit
-	}
-	return sum%10 == 0
 }
 
 func (ls *ServerSystem) LoadOrderHandler(w http.ResponseWriter, r *http.Request) {

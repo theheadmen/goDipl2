@@ -7,12 +7,34 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strconv"
+	"time"
 
 	"github.com/theheadmen/goDipl2/internal/dbconnector"
 	"github.com/theheadmen/goDipl2/internal/models"
 )
 
-func FetchOrderInfo(db *dbconnector.DBConnector, ord *models.Order, baseURL string, ctx context.Context) error {
+func IsValidLuhn(number string) bool {
+	digits := len(number)
+	parity := digits % 2
+	sum := 0
+	for i := 0; i < digits; i++ {
+		digit, err := strconv.Atoi(string(number[i]))
+		if err != nil {
+			return false // Если символ не является цифрой, возвращаем false
+		}
+		if i%2 == parity {
+			digit *= 2
+			if digit > 9 {
+				digit -= 9
+			}
+		}
+		sum += digit
+	}
+	return sum%10 == 0
+}
+
+func fetchOrderInfo(db *dbconnector.DBConnector, ord *models.Order, baseURL string, ctx context.Context) error {
 	// Формируем URL запроса
 	url := fmt.Sprintf("%s/api/orders/%s", baseURL, ord.Number)
 	log.Printf("Try to fetch order: %s by url %s\n", ord.Number, url)
@@ -93,7 +115,7 @@ func FetchOrderInfo(db *dbconnector.DBConnector, ord *models.Order, baseURL stri
 	return nil
 }
 
-func ProcessOrders(db *dbconnector.DBConnector, baseURL string, ctx context.Context) {
+func processOrders(db *dbconnector.DBConnector, baseURL string, ctx context.Context) {
 	var orders []models.Order
 	// берем все заказы которые еще ждут выполнения
 	err := db.GetWaitingOrders(&orders, ctx)
@@ -103,10 +125,46 @@ func ProcessOrders(db *dbconnector.DBConnector, baseURL string, ctx context.Cont
 		for i := 0; i < len(orders); i++ {
 			// и проверяем каждый
 			ord := orders[i]
-			err := FetchOrderInfo(db, &ord, baseURL, ctx)
+			err := fetchOrderInfo(db, &ord, baseURL, ctx)
 			if err != nil {
 				fmt.Printf("Ошибка при обработке заказа %s: %+v\n", ord.Number, err)
 			}
 		}
 	}
+}
+
+func MakeGorutineToCheckOrder(ctx context.Context, ls *ServerSystem) {
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case data := <-ls.Datachan:
+				log.Println("New data to check in channel!")
+				ctx2 := context.Background()
+				err := fetchOrderInfo(ls.DB, &data, ls.BaseURL, ctx2)
+				if err != nil {
+					log.Printf("For user %d, failed to check order: %d, error %+v\n", data.UserID, data.ID, err)
+				}
+			}
+		}
+	}()
+}
+
+func MakeGorutineToCheckOrdersByTimer(ctx context.Context, ls *ServerSystem) {
+	go func() {
+		ctx2 := context.Background()
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				log.Println("Time to check orders by timer")
+				processOrders(ls.DB, ls.BaseURL, ctx2)
+			}
+		}
+	}()
 }

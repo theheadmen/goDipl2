@@ -7,10 +7,8 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/theheadmen/goDipl2/internal/dbconnector"
-	"github.com/theheadmen/goDipl2/internal/models"
 	"github.com/theheadmen/goDipl2/internal/server"
 	"github.com/theheadmen/goDipl2/internal/serverconfig"
 )
@@ -30,46 +28,14 @@ func main() {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
 
-	// Канал для получения данных
-	dataChan := make(chan models.Order)
-
-	ls := server.NewServerSystem(db, dataChan, configStore.FlagAccrual)
-
+	ls := server.NewServerSystem(db, configStore.FlagAccrual)
 	srv := ls.MakeServer(configStore.FlagRunAddr)
 
 	// Горутина, которая ждет данных из канала
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case data := <-dataChan:
-				log.Println("New data to check in channel!")
-				ctx2 := context.Background()
-				err := server.FetchOrderInfo(ls.DB, &data, ls.BaseURL, ctx2)
-				if err != nil {
-					log.Printf("For user %d, failed to check order: %d, error %+v\n", data.UserID, data.ID, err)
-				}
-			}
-		}
-	}()
+	server.MakeGorutineToCheckOrder(ctx, ls)
 
-	// Горутина, которая выполняет ProcessOrders() раз в 30 секунд
-	go func() {
-		ctx2 := context.Background()
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				log.Println("Time to check orders by timer")
-				server.ProcessOrders(ls.DB, ls.BaseURL, ctx2)
-			}
-		}
-	}()
+	// Горутина, которая выполняет проверяет orders раз в 30 секунд
+	server.MakeGorutineToCheckOrdersByTimer(ctx, ls)
 
 	go func() {
 		log.Printf("Starting server on %s\n", configStore.FlagRunAddr)

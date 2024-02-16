@@ -73,15 +73,14 @@ func TestLoyaltySystemWithTestContainer(t *testing.T) {
 	require.NoError(t, err)
 
 	// Setup loyalty system with real database
-	dataChan := make(chan models.Order)
-	ls := server.NewServerSystem(db, dataChan, "http://localhost:8080")
+	ls := server.NewServerSystem(db, "http://localhost:8080")
 
 	go func() {
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case <-dataChan:
+			case <-ls.Datachan:
 				//
 			}
 		}
