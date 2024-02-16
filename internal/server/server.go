@@ -286,6 +286,7 @@ func (ls *ServerSystem) GetBalanceHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	log.Printf("get balance for user %d, current %f, withdrawn %f\n", user.ID, user.Balance, withdrawn)
 	// Формируем ответ
 	balanceResponse := models.BalanceResponse{
 		Current:   user.Balance,
