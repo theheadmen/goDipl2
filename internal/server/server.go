@@ -287,6 +287,16 @@ func (ls *ServerSystem) GetBalanceHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	log.Printf("get balance for user %d, current %f, withdrawn %f\n", user.ID, user.Balance, withdrawn)
+	var withdrawals []models.Withdrawal
+	err = ls.DB.GetAddWithdrawalsByUserID(user.ID, &withdrawals, r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	for _, withdrawal := range withdrawals {
+		log.Printf("in the same time we have withdrawal with number %s, points %f\n", withdrawal.Number, withdrawal.Points)
+	}
+
 	// Формируем ответ
 	balanceResponse := models.BalanceResponse{
 		Current:   user.Balance,
