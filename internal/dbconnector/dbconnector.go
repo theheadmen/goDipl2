@@ -88,3 +88,28 @@ func (dbConnector *DBConnector) GetWaitingOrders(ctx context.Context, orders *[]
 	result := dbConnector.DB.Where("status = 'REGISTERED' OR status = 'PROCESSING'").Find(&orders).WithContext(ctx)
 	return result.Error
 }
+
+func (dbConnector *DBConnector) WithdrawalTransaction(ctx context.Context, order *Order, withdrawal *Withdrawal, updUser *User) error {
+	tx := dbConnector.DB.Begin()
+
+	result := tx.Create(&order).WithContext(ctx)
+	if result.Error != nil {
+		tx.Rollback()
+		return result.Error
+	}
+
+	result = tx.Create(&withdrawal).WithContext(ctx)
+	if result.Error != nil {
+		tx.Rollback()
+		return result.Error
+	}
+
+	result = tx.Save(&updUser).WithContext(ctx)
+	if result.Error != nil {
+		tx.Rollback()
+		return result.Error
+	}
+
+	tx.Commit()
+	return nil
+}

@@ -291,29 +291,16 @@ func (ls *ServerSystem) WithdrawHandler(w http.ResponseWriter, r *http.Request) 
 		UserID: user.ID,
 		Status: "PROCESSED", // Предполагаем, что списание сразу обрабатывается
 	}
-
-	// Сохраняем заказ в базе данных
-	err = ls.DB.AddOrder(r.Context(), &order)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
 	// Создаем списание
 	withdrawal := dbconnector.Withdrawal{
 		Points: withdrawRequest.Sum,
 		UserID: user.ID,
 		Number: withdrawRequest.Order,
 	}
-	// Сохраняем списание в базе данных
-	err = ls.DB.AddWithdrawal(r.Context(), &withdrawal)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
 	// Обновляем баланс пользователя
 	user.Balance -= withdrawRequest.Sum
-	err = ls.DB.UpdateUser(r.Context(), &user)
+	// отправляем Order, withdrawal и обновляем user - но врамках одной транзакции
+	err = ls.DB.WithdrawalTransaction(r.Context(), &order, &withdrawal, &user)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
