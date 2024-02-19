@@ -15,13 +15,11 @@ import (
 
 type ServerSystem struct {
 	DB       *dbconnector.DBConnector
-	Datachan chan models.Order
+	Datachan chan dbconnector.Order
 	BaseURL  string
 }
 
-func NewServerSystem(db *dbconnector.DBConnector, baseURL string) *ServerSystem {
-	// Канал для получения данных
-	dataChan := make(chan models.Order)
+func NewServerSystem(db *dbconnector.DBConnector, baseURL string, dataChan chan dbconnector.Order) *ServerSystem {
 	return &ServerSystem{DB: db, Datachan: dataChan, BaseURL: baseURL}
 }
 
@@ -48,7 +46,7 @@ func (ls *ServerSystem) MakeServer(serverAddr string) *http.Server {
 }
 
 func (ls *ServerSystem) RegisterUserHandler(w http.ResponseWriter, r *http.Request) {
-	var user models.User
+	var user dbconnector.User
 	err := json.NewDecoder(r.Body).Decode(&user)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -70,7 +68,7 @@ func (ls *ServerSystem) RegisterUserHandler(w http.ResponseWriter, r *http.Reque
 	user.Password = string(hashedPassword)
 
 	// Сохраняем пользователя в базе данных
-	err = ls.DB.AddUser(&user, r.Context())
+	err = ls.DB.AddUser(r.Context(), &user)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
@@ -87,7 +85,7 @@ func (ls *ServerSystem) RegisterUserHandler(w http.ResponseWriter, r *http.Reque
 }
 
 func (ls *ServerSystem) LoginUserHandler(w http.ResponseWriter, r *http.Request) {
-	var reqUser models.User
+	var reqUser dbconnector.User
 	err := json.NewDecoder(r.Body).Decode(&reqUser)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -101,8 +99,8 @@ func (ls *ServerSystem) LoginUserHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Ищем пользователя в базе данных
-	var user models.User
-	err = ls.DB.GetUserByEmail(reqUser.Email, &user, r.Context())
+	var user dbconnector.User
+	err = ls.DB.GetUserByEmail(r.Context(), reqUser.Email, &user)
 	if err != nil {
 		http.Error(w, "Invalid login or password", http.StatusUnauthorized)
 		return
@@ -126,21 +124,13 @@ func (ls *ServerSystem) LoginUserHandler(w http.ResponseWriter, r *http.Request)
 }
 
 func (ls *ServerSystem) LoadOrderHandler(w http.ResponseWriter, r *http.Request) {
-	// Проверяем аутентификацию пользователя
-	cookie, err := r.Cookie("session_token")
+	var user dbconnector.User
+	err := ls.AuthenticateUser(w, r, &user)
 	if err != nil {
-		http.Error(w, "User not authenticated", http.StatusUnauthorized)
+		// Handle the error
 		return
 	}
-
-	// Ищем пользователя в базе данных
-	var user models.User
-	err = ls.DB.GetUserByEmail(cookie.Value, &user, r.Context())
-	if err != nil {
-		http.Error(w, "User not found", http.StatusUnauthorized)
-		return
-	}
-	log.Printf("load orders call for %d\n", user.ID)
+	log.Printf("get withdraw call for %d\n", user.ID)
 
 	// Читаем номер заказа из тела запроса
 	body, err := io.ReadAll(r.Body)
@@ -160,8 +150,8 @@ func (ls *ServerSystem) LoadOrderHandler(w http.ResponseWriter, r *http.Request)
 	log.Printf("For user %d, get new order: %s\n", user.ID, orderNumber)
 
 	// Проверяем, не был ли загружен этот заказ другим пользователем
-	var existingOrder models.Order
-	err = ls.DB.GetOrderByNumber(orderNumber, &existingOrder, r.Context())
+	var existingOrder dbconnector.Order
+	err = ls.DB.GetOrderByNumber(r.Context(), orderNumber, &existingOrder)
 	if err == nil {
 		if existingOrder.UserID == user.ID {
 			log.Printf("For user %d, we already have order: %s\n", user.ID, orderNumber)
@@ -175,13 +165,13 @@ func (ls *ServerSystem) LoadOrderHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Создаем новый заказ
-	order := models.Order{
+	order := dbconnector.Order{
 		Number: orderNumber,
 		UserID: user.ID,
 	}
 
 	// Сохраняем заказ в базе данных
-	err = ls.DB.AddOrder(&order, r.Context())
+	err = ls.DB.AddOrder(r.Context(), &order)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -195,25 +185,17 @@ func (ls *ServerSystem) LoadOrderHandler(w http.ResponseWriter, r *http.Request)
 }
 
 func (ls *ServerSystem) GetOrderHandler(w http.ResponseWriter, r *http.Request) {
-	// Проверяем аутентификацию пользователя
-	cookie, err := r.Cookie("session_token")
+	var user dbconnector.User
+	err := ls.AuthenticateUser(w, r, &user)
 	if err != nil {
-		http.Error(w, "User not authenticated", http.StatusUnauthorized)
+		// Handle the error
 		return
 	}
-
-	// Ищем пользователя в базе данных
-	var user models.User
-	err = ls.DB.GetUserByEmail(cookie.Value, &user, r.Context())
-	if err != nil {
-		http.Error(w, "User not found", http.StatusUnauthorized)
-		return
-	}
-	log.Printf("get orders call for %d\n", user.ID)
+	log.Printf("get withdraw call for %d\n", user.ID)
 
 	// Получаем список заказов пользователя
-	var orders []models.Order
-	err = ls.DB.GetOrdersByUserID(user.ID, &orders, r.Context())
+	var orders []dbconnector.Order
+	err = ls.DB.GetOrdersByUserID(r.Context(), user.ID, &orders)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -238,30 +220,23 @@ func (ls *ServerSystem) GetOrderHandler(w http.ResponseWriter, r *http.Request) 
 
 	// Возвращаем список заказов в формате JSON
 	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(orderResponses)
 }
 
 func (ls *ServerSystem) GetBalanceHandler(w http.ResponseWriter, r *http.Request) {
-	// Проверяем аутентификацию пользователя
-	cookie, err := r.Cookie("session_token")
+	var user dbconnector.User
+	err := ls.AuthenticateUser(w, r, &user)
 	if err != nil {
-		http.Error(w, "User not authenticated", http.StatusUnauthorized)
+		// Handle the error
 		return
 	}
-
-	// Ищем пользователя в базе данных
-	var user models.User
-	err = ls.DB.GetUserByEmail(cookie.Value, &user, r.Context())
-	if err != nil {
-		http.Error(w, "User not found", http.StatusUnauthorized)
-		return
-	}
-	log.Printf("get balance call for %d\n", user.ID)
+	log.Printf("get withdraw call for %d\n", user.ID)
 
 	// Получаем сумму использованных баллов
 	withdrawn := 0.0
-	var withdrawals []models.Withdrawal
-	err = ls.DB.GetAddWithdrawalsByUserID(user.ID, &withdrawals, r.Context())
+	var withdrawals []dbconnector.Withdrawal
+	err = ls.DB.GetAddWithdrawalsByUserID(r.Context(), user.ID, &withdrawals)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -285,21 +260,13 @@ func (ls *ServerSystem) GetBalanceHandler(w http.ResponseWriter, r *http.Request
 }
 
 func (ls *ServerSystem) WithdrawHandler(w http.ResponseWriter, r *http.Request) {
-	// Проверяем аутентификацию пользователя
-	cookie, err := r.Cookie("session_token")
+	var user dbconnector.User
+	err := ls.AuthenticateUser(w, r, &user)
 	if err != nil {
-		http.Error(w, "User not authenticated", http.StatusUnauthorized)
+		// Handle the error
 		return
 	}
-
-	// Ищем пользователя в базе данных
-	var user models.User
-	err = ls.DB.GetUserByEmail(cookie.Value, &user, r.Context())
-	if err != nil {
-		http.Error(w, "User not found", http.StatusUnauthorized)
-		return
-	}
-	log.Printf("withdraw call for %d\n", user.ID)
+	log.Printf("get withdraw call for %d\n", user.ID)
 
 	// Декодируем JSON-запрос
 	var withdrawRequest models.WithdrawRequest
@@ -319,26 +286,26 @@ func (ls *ServerSystem) WithdrawHandler(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Создаем новый заказ на списание
-	order := models.Order{
+	order := dbconnector.Order{
 		Number: withdrawRequest.Order,
 		UserID: user.ID,
 		Status: "PROCESSED", // Предполагаем, что списание сразу обрабатывается
 	}
 
 	// Сохраняем заказ в базе данных
-	err = ls.DB.AddOrder(&order, r.Context())
+	err = ls.DB.AddOrder(r.Context(), &order)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	// Создаем списание
-	withdrawal := models.Withdrawal{
+	withdrawal := dbconnector.Withdrawal{
 		Points: withdrawRequest.Sum,
 		UserID: user.ID,
 		Number: withdrawRequest.Order,
 	}
 	// Сохраняем списание в базе данных
-	err = ls.DB.AddWithdrawal(&withdrawal, r.Context())
+	err = ls.DB.AddWithdrawal(r.Context(), &withdrawal)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -346,7 +313,7 @@ func (ls *ServerSystem) WithdrawHandler(w http.ResponseWriter, r *http.Request) 
 
 	// Обновляем баланс пользователя
 	user.Balance -= withdrawRequest.Sum
-	err = ls.DB.UpdateUser(&user, r.Context())
+	err = ls.DB.UpdateUser(r.Context(), &user)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -356,25 +323,17 @@ func (ls *ServerSystem) WithdrawHandler(w http.ResponseWriter, r *http.Request) 
 }
 
 func (ls *ServerSystem) GetWithdrawalsHandler(w http.ResponseWriter, r *http.Request) {
-	// Проверяем аутентификацию пользователя
-	cookie, err := r.Cookie("session_token")
+	var user dbconnector.User
+	err := ls.AuthenticateUser(w, r, &user)
 	if err != nil {
-		http.Error(w, "User not authenticated", http.StatusUnauthorized)
-		return
-	}
-
-	// Ищем пользователя в базе данных
-	var user models.User
-	err = ls.DB.GetUserByEmail(cookie.Value, &user, r.Context())
-	if err != nil {
-		http.Error(w, "User not found", http.StatusUnauthorized)
+		// Handle the error
 		return
 	}
 	log.Printf("get withdraw call for %d\n", user.ID)
 
 	// Получаем список выводов средств пользователя
-	var withdrawals []models.Withdrawal
-	err = ls.DB.GetAddWithdrawalsByUserID(user.ID, &withdrawals, r.Context())
+	var withdrawals []dbconnector.Withdrawal
+	err = ls.DB.GetAddWithdrawalsByUserID(r.Context(), user.ID, &withdrawals)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -400,4 +359,23 @@ func (ls *ServerSystem) GetWithdrawalsHandler(w http.ResponseWriter, r *http.Req
 	// Возвращаем список выводов в формате JSON
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(withdrawalResponses)
+}
+
+// AuthenticateUser authenticates the user and looks up the user in the database.
+func (ls *ServerSystem) AuthenticateUser(w http.ResponseWriter, r *http.Request, user *dbconnector.User) error {
+	// Проверяем аутентификацию пользователя
+	cookie, err := r.Cookie("session_token")
+	if err != nil {
+		http.Error(w, "User not authenticated", http.StatusUnauthorized)
+		return err
+	}
+
+	// Ищем пользователя в базе данных
+	err = ls.DB.GetUserByEmail(r.Context(), cookie.Value, user)
+	if err != nil {
+		http.Error(w, "User not found", http.StatusUnauthorized)
+		return err
+	}
+
+	return nil
 }

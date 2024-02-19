@@ -27,8 +27,9 @@ func main() {
 	if err := db.DBInitialize(); err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
-
-	ls := server.NewServerSystem(db, configStore.FlagAccrual)
+	// Канал для получения данных
+	dataChan := make(chan dbconnector.Order)
+	ls := server.NewServerSystem(db, configStore.FlagAccrual, dataChan)
 	srv := ls.MakeServer(configStore.FlagRunAddr)
 
 	// Горутина, которая ждет данных из канала

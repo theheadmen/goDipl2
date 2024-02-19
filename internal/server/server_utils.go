@@ -34,7 +34,7 @@ func IsValidLuhn(number string) bool {
 	return sum%10 == 0
 }
 
-func fetchOrderInfo(db *dbconnector.DBConnector, ord *models.Order, baseURL string, ctx context.Context) error {
+func fetchOrderInfo(db *dbconnector.DBConnector, ord *dbconnector.Order, baseURL string, ctx context.Context) error {
 	// Формируем URL запроса
 	url := fmt.Sprintf("%s/api/orders/%s", baseURL, ord.Number)
 	log.Printf("Try to fetch order: %s by url %s\n", ord.Number, url)
@@ -84,15 +84,15 @@ func fetchOrderInfo(db *dbconnector.DBConnector, ord *models.Order, baseURL stri
 	ord.Status = orderResponse.Status
 	ord.Points = orderResponse.Accrual
 	// Обновляем запись в базе данных
-	err = db.UpdateOrder(ord, ctx)
+	err = db.UpdateOrder(ctx, ord)
 	if err != nil {
 		return fmt.Errorf("ошибка при обновлении записи в базе данных: %w", err)
 	}
 
 	// Если Accrual не пустое, обновляем Balance у User
 	if orderResponse.Accrual > 0 {
-		var user models.User
-		err = db.GetUserByUserID(ord.UserID, &user, ctx)
+		var user dbconnector.User
+		err = db.GetUserByUserID(ctx, ord.UserID, &user)
 		if err != nil {
 			return fmt.Errorf("ошибка при поиске пользователя: %w", err)
 		}
@@ -101,24 +101,25 @@ func fetchOrderInfo(db *dbconnector.DBConnector, ord *models.Order, baseURL stri
 		user.Balance += float64(orderResponse.Accrual)
 
 		// Обновляем запись пользователя в базе данных
-		err = db.UpdateUser(&user, ctx)
+		err = db.UpdateUser(ctx, &user)
 		if err != nil {
 			return fmt.Errorf("ошибка при обновлении баланса пользователя: %w", err)
 		}
 		log.Printf("User %d now have %f\n", ord.UserID, user.Balance)
 	}
 
-	if ord.Status == "INVALID" || ord.Status == "PROCESSED" {
+	/*if ord.Status == "INVALID" || ord.Status == "PROCESSED" {
+		// нужна ли здесь логика?
 		return nil
-	}
+	}*/
 
 	return nil
 }
 
 func processOrders(db *dbconnector.DBConnector, baseURL string, ctx context.Context) {
-	var orders []models.Order
+	var orders []dbconnector.Order
 	// берем все заказы которые еще ждут выполнения
-	err := db.GetWaitingOrders(&orders, ctx)
+	err := db.GetWaitingOrders(ctx, &orders)
 	if err != nil {
 		fmt.Printf("ошибка при запросе ORDERS из бд: %+v", err)
 	} else {
