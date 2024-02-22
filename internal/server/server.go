@@ -10,16 +10,17 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/theheadmen/goDipl2/internal/dbconnector"
 	"github.com/theheadmen/goDipl2/internal/models"
+	"github.com/theheadmen/goDipl2/internal/service"
 	"golang.org/x/crypto/bcrypt"
 )
 
 type ServerSystem struct {
-	DB      *dbconnector.DBConnector
+	Storage service.Storage
 	BaseURL string
 }
 
-func NewServerSystem(db *dbconnector.DBConnector, baseURL string) *ServerSystem {
-	return &ServerSystem{DB: db, BaseURL: baseURL}
+func NewServerSystem(storage service.Storage, baseURL string) *ServerSystem {
+	return &ServerSystem{Storage: storage, BaseURL: baseURL}
 }
 
 func (ls *ServerSystem) MakeServer(serverAddr string) *http.Server {
@@ -67,7 +68,7 @@ func (ls *ServerSystem) RegisterUserHandler(w http.ResponseWriter, r *http.Reque
 	user.Password = string(hashedPassword)
 
 	// Сохраняем пользователя в базе данных
-	err = ls.DB.AddUser(r.Context(), &user)
+	err = ls.Storage.AddUser(r.Context(), &user)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
@@ -99,7 +100,7 @@ func (ls *ServerSystem) LoginUserHandler(w http.ResponseWriter, r *http.Request)
 
 	// Ищем пользователя в базе данных
 	var user dbconnector.User
-	err = ls.DB.GetUserByEmail(r.Context(), reqUser.Email, &user)
+	err = ls.Storage.GetUserByEmail(r.Context(), reqUser.Email, &user)
 	if err != nil {
 		http.Error(w, "Invalid login or password", http.StatusUnauthorized)
 		return
@@ -150,7 +151,7 @@ func (ls *ServerSystem) LoadOrderHandler(w http.ResponseWriter, r *http.Request)
 
 	// Проверяем, не был ли загружен этот заказ другим пользователем
 	var existingOrder dbconnector.Order
-	err = ls.DB.GetOrderByNumber(r.Context(), orderNumber, &existingOrder)
+	err = ls.Storage.GetOrderByNumber(r.Context(), orderNumber, &existingOrder)
 	if err == nil {
 		if existingOrder.UserID == user.ID {
 			log.Printf("For user %d, we already have order: %s\n", user.ID, orderNumber)
@@ -170,7 +171,7 @@ func (ls *ServerSystem) LoadOrderHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Сохраняем заказ в базе данных
-	err = ls.DB.AddOrder(r.Context(), &order)
+	err = ls.Storage.AddOrder(r.Context(), &order)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -192,7 +193,7 @@ func (ls *ServerSystem) GetOrderHandler(w http.ResponseWriter, r *http.Request) 
 
 	// Получаем список заказов пользователя
 	var orders []dbconnector.Order
-	err = ls.DB.GetOrdersByUserID(r.Context(), user.ID, &orders)
+	err = ls.Storage.GetOrdersByUserID(r.Context(), user.ID, &orders)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -233,7 +234,7 @@ func (ls *ServerSystem) GetBalanceHandler(w http.ResponseWriter, r *http.Request
 	// Получаем сумму использованных баллов
 	withdrawn := 0.0
 	var withdrawals []dbconnector.Withdrawal
-	err = ls.DB.GetAddWithdrawalsByUserID(r.Context(), user.ID, &withdrawals)
+	err = ls.Storage.GetAddWithdrawalsByUserID(r.Context(), user.ID, &withdrawals)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -296,8 +297,8 @@ func (ls *ServerSystem) WithdrawHandler(w http.ResponseWriter, r *http.Request) 
 	}
 	// Обновляем баланс пользователя
 	user.Balance -= withdrawRequest.Sum
-	// отправляем Order, withdrawal и обновляем user - но врамках одной транзакции
-	err = ls.DB.WithdrawalTransaction(r.Context(), &order, &withdrawal, &user)
+	// отправляем Order, withdrawal и обновляем user - но в рамках одной транзакции
+	err = ls.Storage.WithdrawalTransaction(r.Context(), &order, &withdrawal, &user)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -317,7 +318,7 @@ func (ls *ServerSystem) GetWithdrawalsHandler(w http.ResponseWriter, r *http.Req
 
 	// Получаем список выводов средств пользователя
 	var withdrawals []dbconnector.Withdrawal
-	err = ls.DB.GetAddWithdrawalsByUserID(r.Context(), user.ID, &withdrawals)
+	err = ls.Storage.GetAddWithdrawalsByUserID(r.Context(), user.ID, &withdrawals)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -355,7 +356,7 @@ func (ls *ServerSystem) AuthenticateUser(w http.ResponseWriter, r *http.Request,
 	}
 
 	// Ищем пользователя в базе данных
-	err = ls.DB.GetUserByEmail(r.Context(), cookie.Value, user)
+	err = ls.Storage.GetUserByEmail(r.Context(), cookie.Value, user)
 	if err != nil {
 		http.Error(w, "User not found", http.StatusUnauthorized)
 		return err

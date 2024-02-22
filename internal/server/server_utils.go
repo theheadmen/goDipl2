@@ -12,6 +12,7 @@ import (
 
 	"github.com/theheadmen/goDipl2/internal/dbconnector"
 	"github.com/theheadmen/goDipl2/internal/models"
+	"github.com/theheadmen/goDipl2/internal/service"
 )
 
 func IsValidLuhn(number string) bool {
@@ -34,7 +35,7 @@ func IsValidLuhn(number string) bool {
 	return sum%10 == 0
 }
 
-func fetchOrderInfo(db *dbconnector.DBConnector, ord *dbconnector.Order, baseURL string, ctx context.Context) error {
+func fetchOrderInfo(storage service.Storage, ord *dbconnector.Order, baseURL string, ctx context.Context) error {
 	// Формируем URL запроса
 	url := fmt.Sprintf("%s/api/orders/%s", baseURL, ord.Number)
 	log.Printf("Try to fetch order: %s by url %s\n", ord.Number, url)
@@ -84,7 +85,7 @@ func fetchOrderInfo(db *dbconnector.DBConnector, ord *dbconnector.Order, baseURL
 	ord.Status = orderResponse.Status
 	ord.Points = orderResponse.Accrual
 	// Обновляем запись в базе данных
-	err = db.UpdateOrder(ctx, ord)
+	err = storage.UpdateOrder(ctx, ord)
 	if err != nil {
 		return fmt.Errorf("ошибка при обновлении записи в базе данных: %w", err)
 	}
@@ -92,7 +93,7 @@ func fetchOrderInfo(db *dbconnector.DBConnector, ord *dbconnector.Order, baseURL
 	// Если Accrual не пустое, обновляем Balance у User
 	if orderResponse.Accrual > 0 {
 		var user dbconnector.User
-		err = db.GetUserByUserID(ctx, ord.UserID, &user)
+		err = storage.GetUserByUserID(ctx, ord.UserID, &user)
 		if err != nil {
 			return fmt.Errorf("ошибка при поиске пользователя: %w", err)
 		}
@@ -101,7 +102,7 @@ func fetchOrderInfo(db *dbconnector.DBConnector, ord *dbconnector.Order, baseURL
 		user.Balance += float64(orderResponse.Accrual)
 
 		// Обновляем запись пользователя в базе данных
-		err = db.UpdateUser(ctx, &user)
+		err = storage.UpdateUser(ctx, &user)
 		if err != nil {
 			return fmt.Errorf("ошибка при обновлении баланса пользователя: %w", err)
 		}
@@ -116,17 +117,17 @@ func fetchOrderInfo(db *dbconnector.DBConnector, ord *dbconnector.Order, baseURL
 	return nil
 }
 
-func processOrders(db *dbconnector.DBConnector, baseURL string, ctx context.Context) {
+func processOrders(storage service.Storage, baseURL string, ctx context.Context) {
 	var orders []dbconnector.Order
 	// берем все заказы которые еще ждут выполнения
-	err := db.GetWaitingOrders(ctx, &orders)
+	err := storage.GetWaitingOrders(ctx, &orders)
 	if err != nil {
 		fmt.Printf("ошибка при запросе ORDERS из бд: %+v", err)
 	} else {
 		for i := 0; i < len(orders); i++ {
 			// и проверяем каждый
 			ord := orders[i]
-			err := fetchOrderInfo(db, &ord, baseURL, ctx)
+			err := fetchOrderInfo(storage, &ord, baseURL, ctx)
 			if err != nil {
 				fmt.Printf("Ошибка при обработке заказа %s: %+v\n", ord.Number, err)
 			}
@@ -146,7 +147,7 @@ func MakeGorutineToCheckOrdersByTimer(ctx context.Context, ls *ServerSystem) {
 				return
 			case <-ticker.C:
 				log.Println("Time to check orders by timer")
-				processOrders(ls.DB, ls.BaseURL, ctx2)
+				processOrders(ls.Storage, ls.BaseURL, ctx2)
 				// застопорить старый
 				// сделать новое значение
 				// ticker.Reset(новое значение)
