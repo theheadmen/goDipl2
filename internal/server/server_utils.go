@@ -134,28 +134,10 @@ func processOrders(db *dbconnector.DBConnector, baseURL string, ctx context.Cont
 	}
 }
 
-func MakeGorutineToCheckOrder(ctx context.Context, ls *ServerSystem) {
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case data := <-ls.Datachan:
-				log.Println("New data to check in channel!")
-				ctx2 := context.Background()
-				err := fetchOrderInfo(ls.DB, &data, ls.BaseURL, ctx2)
-				if err != nil {
-					log.Printf("For user %d, failed to check order: %d, error %+v\n", data.UserID, data.ID, err)
-				}
-			}
-		}
-	}()
-}
-
 func MakeGorutineToCheckOrdersByTimer(ctx context.Context, ls *ServerSystem) {
 	go func() {
 		ctx2 := context.Background()
-		ticker := time.NewTicker(30 * time.Second)
+		ticker := time.NewTicker(10 * time.Second)
 		defer ticker.Stop()
 
 		for {
@@ -165,6 +147,9 @@ func MakeGorutineToCheckOrdersByTimer(ctx context.Context, ls *ServerSystem) {
 			case <-ticker.C:
 				log.Println("Time to check orders by timer")
 				processOrders(ls.DB, ls.BaseURL, ctx2)
+				// застопорить старый
+				// сделать новое значение
+				// ticker.Reset(новое значение)
 			}
 		}
 	}()

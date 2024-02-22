@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"sync"
 	"testing"
 	"time"
 
@@ -36,8 +35,6 @@ type LoyaltySystemTestSuite struct {
 	router   *mux.Router
 	postgres testcontainers.Container
 	ctx      context.Context
-	wg       *sync.WaitGroup
-	dataChan chan dbconnector.Order
 }
 
 func (suite *LoyaltySystemTestSuite) SetupSuite() {
@@ -78,41 +75,15 @@ func (suite *LoyaltySystemTestSuite) SetupSuite() {
 	require.NoError(suite.T(), err)
 
 	suite.db = db
-	// Канал для получения данных
-	dataChan := make(chan dbconnector.Order)
-	var wg sync.WaitGroup
-	suite.dataChan = dataChan
-	suite.wg = &wg
 
-	suite.ls = server.NewServerSystem(db, "http://localhost:8080", dataChan)
+	suite.ls = server.NewServerSystem(db, "http://localhost:8080")
 	suite.router = mux.NewRouter()
 	suite.router.HandleFunc("/api/user/load", suite.ls.LoadOrderHandler).Methods("POST")
-}
-
-func (suite *LoyaltySystemTestSuite) dataChanDummy() {
-	suite.wg.Add(1)
-	go func() {
-		defer suite.wg.Done()
-		for {
-			select {
-			case <-suite.ctx.Done():
-				return
-			case data, opened := <-suite.dataChan:
-				if !opened {
-					return
-				}
-				suite.T().Log(data)
-			}
-		}
-	}()
 }
 
 func (suite *LoyaltySystemTestSuite) TearDownSuite() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-
-	close(suite.dataChan) //
-	suite.wg.Wait()
 
 	require.NoError(suite.T(), suite.postgres.Terminate(ctx))
 }
@@ -144,7 +115,6 @@ func (suite *LoyaltySystemTestSuite) TestLoyaltySystemWithTestContainer() {
 
 	for _, tc := range testCases {
 		suite.T().Run(tc.name, func(t *testing.T) {
-			suite.dataChanDummy()
 			// Setup database with test data
 			err := suite.db.AddUser(suite.ctx, &tc.user)
 			require.NoError(t, err)

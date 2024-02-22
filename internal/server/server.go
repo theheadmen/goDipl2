@@ -14,13 +14,12 @@ import (
 )
 
 type ServerSystem struct {
-	DB       *dbconnector.DBConnector
-	Datachan chan dbconnector.Order
-	BaseURL  string
+	DB      *dbconnector.DBConnector
+	BaseURL string
 }
 
-func NewServerSystem(db *dbconnector.DBConnector, baseURL string, dataChan chan dbconnector.Order) *ServerSystem {
-	return &ServerSystem{DB: db, Datachan: dataChan, BaseURL: baseURL}
+func NewServerSystem(db *dbconnector.DBConnector, baseURL string) *ServerSystem {
+	return &ServerSystem{DB: db, BaseURL: baseURL}
 }
 
 func (ls *ServerSystem) MakeServer(serverAddr string) *http.Server {
@@ -176,8 +175,6 @@ func (ls *ServerSystem) LoadOrderHandler(w http.ResponseWriter, r *http.Request)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	// отправляем заказ в канал на обработку
-	ls.Datachan <- order
 
 	log.Printf("For user %d, saved new order: %s\n", user.ID, orderNumber)
 
