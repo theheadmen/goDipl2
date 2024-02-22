@@ -137,7 +137,7 @@ func processOrders(db *dbconnector.DBConnector, baseURL string, ctx context.Cont
 func MakeGorutineToCheckOrdersByTimer(ctx context.Context, ls *ServerSystem) {
 	go func() {
 		ctx2 := context.Background()
-		ticker := time.NewTicker(10 * time.Second)
+		ticker := time.NewTicker(3 * time.Second)
 		defer ticker.Stop()
 
 		for {
