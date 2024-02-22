@@ -85,7 +85,7 @@ func (dbConnector *DBConnector) GetAddWithdrawalsByUserID(ctx context.Context, u
 }
 
 func (dbConnector *DBConnector) GetWaitingOrders(ctx context.Context, orders *[]Order) error {
-	result := dbConnector.DB.Where("status = 'REGISTERED' OR status = 'PROCESSING'").Find(&orders).WithContext(ctx)
+	result := dbConnector.DB.Where("status = 'REGISTERED' OR status = 'PROCESSING' OR status = 'NEW'").Find(&orders).WithContext(ctx)
 	return result.Error
 }
 
