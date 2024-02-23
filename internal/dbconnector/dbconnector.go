@@ -2,6 +2,7 @@ package dbconnector
 
 import (
 	"context"
+	"log"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -111,5 +112,34 @@ func (dbConnector *DBConnector) WithdrawalTransaction(ctx context.Context, order
 	}
 
 	tx.Commit()
+	return nil
+}
+
+func (dbConnector *DBConnector) DeleteAllData(ctx context.Context) error {
+	tx := dbConnector.DB.Begin()
+
+	// Delete all data from the Withdrawal table
+	result := tx.Session(&gorm.Session{AllowGlobalUpdate: true}).Unscoped().Delete(&Withdrawal{}).WithContext(ctx)
+	if result.Error != nil {
+		tx.Rollback()
+		return result.Error
+	}
+
+	// Delete all data from the Order table
+	result = tx.Session(&gorm.Session{AllowGlobalUpdate: true}).Unscoped().Delete(&Order{}).WithContext(ctx)
+	if result.Error != nil {
+		tx.Rollback()
+		return result.Error
+	}
+
+	// Delete all data from the User table
+	result = tx.Session(&gorm.Session{AllowGlobalUpdate: true}).Unscoped().Delete(&User{}).WithContext(ctx)
+	if result.Error != nil {
+		tx.Rollback()
+		return result.Error
+	}
+
+	tx.Commit()
+	log.Println("Clean data in database")
 	return nil
 }

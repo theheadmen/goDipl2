@@ -52,6 +52,7 @@ func (ls *ServerSystem) RegisterUserHandler(w http.ResponseWriter, r *http.Reque
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	log.Printf("try to register with email: %s, and password: %s\n", user.Email, user.Password)
 
 	// Проверяем, что логин и пароль не пустые
 	if user.Email == "" || user.Password == "" {
@@ -91,9 +92,11 @@ func (ls *ServerSystem) LoginUserHandler(w http.ResponseWriter, r *http.Request)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	log.Printf("try to login with email: %s, and password: %s\n", reqUser.Email, reqUser.Password)
 
 	// Проверяем, что логин и пароль не пустые
 	if reqUser.Email == "" || reqUser.Password == "" {
+		log.Println("Login and password are required")
 		http.Error(w, "Login and password are required", http.StatusBadRequest)
 		return
 	}
@@ -102,6 +105,7 @@ func (ls *ServerSystem) LoginUserHandler(w http.ResponseWriter, r *http.Request)
 	var user dbconnector.User
 	err = ls.Storage.GetUserByEmail(r.Context(), reqUser.Email, &user)
 	if err != nil {
+		log.Println("Invalid login or password")
 		http.Error(w, "Invalid login or password", http.StatusUnauthorized)
 		return
 	}
@@ -109,6 +113,7 @@ func (ls *ServerSystem) LoginUserHandler(w http.ResponseWriter, r *http.Request)
 	// Проверяем пароль
 	err = bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(reqUser.Password))
 	if err != nil {
+		log.Println("Invalid login or password")
 		http.Error(w, "Invalid login or password", http.StatusUnauthorized)
 		return
 	}
@@ -130,7 +135,7 @@ func (ls *ServerSystem) LoadOrderHandler(w http.ResponseWriter, r *http.Request)
 		// Handle the error
 		return
 	}
-	log.Printf("get withdraw call for %d\n", user.ID)
+	log.Printf("post order call for %d\n", user.ID)
 
 	// Читаем номер заказа из тела запроса
 	body, err := io.ReadAll(r.Body)
@@ -189,7 +194,7 @@ func (ls *ServerSystem) GetOrderHandler(w http.ResponseWriter, r *http.Request) 
 		// Handle the error
 		return
 	}
-	log.Printf("get withdraw call for %d\n", user.ID)
+	log.Printf("get order call for %d\n", user.ID)
 
 	// Получаем список заказов пользователя
 	var orders []dbconnector.Order
@@ -229,7 +234,7 @@ func (ls *ServerSystem) GetBalanceHandler(w http.ResponseWriter, r *http.Request
 		// Handle the error
 		return
 	}
-	log.Printf("get withdraw call for %d\n", user.ID)
+	log.Printf("get balance call for %d\n", user.ID)
 
 	// Получаем сумму использованных баллов
 	withdrawn := 0.0
@@ -254,6 +259,7 @@ func (ls *ServerSystem) GetBalanceHandler(w http.ResponseWriter, r *http.Request
 
 	// Возвращаем ответ в формате JSON
 	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(balanceResponse)
 }
 
@@ -264,7 +270,7 @@ func (ls *ServerSystem) WithdrawHandler(w http.ResponseWriter, r *http.Request) 
 		// Handle the error
 		return
 	}
-	log.Printf("get withdraw call for %d\n", user.ID)
+	log.Printf("post withdraw call for %d\n", user.ID)
 
 	// Декодируем JSON-запрос
 	var withdrawRequest models.WithdrawRequest
@@ -343,6 +349,7 @@ func (ls *ServerSystem) GetWithdrawalsHandler(w http.ResponseWriter, r *http.Req
 
 	// Возвращаем список выводов в формате JSON
 	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(withdrawalResponses)
 }
 
