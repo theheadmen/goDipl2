@@ -289,6 +289,7 @@ func (suite *LoyaltySystemTestSuite) TestLoyaltySystemRegister() {
 			assert.Equal(t, tc.expectedStatus, rr.Code)
 			if tc.expectedStatus == http.StatusOK {
 				resp := rr.Result()
+				defer resp.Body.Close()
 				cookies := resp.Cookies()
 				for _, cookie := range cookies {
 					assert.Equal(t, cookie.Name, "session_token")
@@ -373,6 +374,7 @@ func (suite *LoyaltySystemTestSuite) TestLoyaltySystemLogin() {
 			assert.Equal(t, tc.expectedStatus, rr.Code)
 			if tc.expectedStatus == http.StatusOK {
 				resp := rr.Result()
+				defer resp.Body.Close()
 				cookies := resp.Cookies()
 				for _, cookie := range cookies {
 					assert.Equal(t, cookie.Name, "session_token")
