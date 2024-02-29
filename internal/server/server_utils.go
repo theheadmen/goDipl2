@@ -157,7 +157,7 @@ func MakeGorutineToCheckOrdersByTimer(ctx context.Context, ls *ServerSystem) {
 	go func() {
 		ctx2 := context.Background()
 		defTimerTime := time.Duration(defTimeToReturn) * time.Second
-		ticker := time.NewTicker(defTimerTime * time.Second)
+		ticker := time.NewTicker(defTimerTime)
 		defer ticker.Stop()
 
 		for {
