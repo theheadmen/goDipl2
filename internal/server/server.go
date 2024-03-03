@@ -11,7 +11,6 @@ import (
 	"github.com/theheadmen/goDipl2/internal/dbconnector"
 	"github.com/theheadmen/goDipl2/internal/models"
 	"github.com/theheadmen/goDipl2/internal/service"
-	"golang.org/x/crypto/bcrypt"
 )
 
 type ServerSystem struct {
@@ -54,24 +53,10 @@ func (ls *ServerSystem) RegisterUserHandler(w http.ResponseWriter, r *http.Reque
 	}
 	log.Printf("try to register with email: %s, and password: %s\n", user.Email, user.Password)
 
-	// Проверяем, что логин и пароль не пустые
-	if user.Email == "" || user.Password == "" {
-		http.Error(w, "Login and password are required", http.StatusBadRequest)
-		return
-	}
-
-	// Хешируем пароль
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(user.Password), bcrypt.DefaultCost)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	user.Password = string(hashedPassword)
-
 	// Сохраняем пользователя в базе данных
-	err = ls.Storage.AddUser(r.Context(), &user)
+	errorCode, err := service.RegisterUserLogic(r.Context(), ls.Storage, user)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusConflict)
+		http.Error(w, err.Error(), errorCode)
 		return
 	}
 
@@ -94,34 +79,16 @@ func (ls *ServerSystem) LoginUserHandler(w http.ResponseWriter, r *http.Request)
 	}
 	log.Printf("try to login with email: %s, and password: %s\n", reqUser.Email, reqUser.Password)
 
-	// Проверяем, что логин и пароль не пустые
-	if reqUser.Email == "" || reqUser.Password == "" {
-		log.Println("Login and password are required")
-		http.Error(w, "Login and password are required", http.StatusBadRequest)
-		return
-	}
-
-	// Ищем пользователя в базе данных
-	var user dbconnector.User
-	err = ls.Storage.GetUserByEmail(r.Context(), reqUser.Email, &user)
+	respCode, err := service.LoginUserLogic(r.Context(), ls.Storage, reqUser)
 	if err != nil {
-		log.Println("Invalid login or password")
-		http.Error(w, "Invalid login or password", http.StatusUnauthorized)
-		return
-	}
-
-	// Проверяем пароль
-	err = bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(reqUser.Password))
-	if err != nil {
-		log.Println("Invalid login or password")
-		http.Error(w, "Invalid login or password", http.StatusUnauthorized)
+		http.Error(w, err.Error(), respCode)
 		return
 	}
 
 	// Устанавливаем cookie для аутентификации
 	http.SetCookie(w, &http.Cookie{
 		Name:  "session_token",
-		Value: user.Email, // В качестве токена используем email пользователя
+		Value: reqUser.Email, // В качестве токена используем email пользователя
 		Path:  "/",
 	})
 
@@ -145,40 +112,9 @@ func (ls *ServerSystem) LoadOrderHandler(w http.ResponseWriter, r *http.Request)
 	}
 	orderNumber := string(body)
 
-	// Проверяем корректность номера заказа
-	if !IsValidLuhn(orderNumber) {
-		log.Printf("For user %d, get incorrect order: %s\n", user.ID, orderNumber)
-		http.Error(w, "Invalid order number format", http.StatusUnprocessableEntity)
-		return
-	}
-
-	log.Printf("For user %d, get new order: %s\n", user.ID, orderNumber)
-
-	// Проверяем, не был ли загружен этот заказ другим пользователем
-	var existingOrder dbconnector.Order
-	err = ls.Storage.GetOrderByNumber(r.Context(), orderNumber, &existingOrder)
-	if err == nil {
-		if existingOrder.UserID == user.ID {
-			log.Printf("For user %d, we already have order: %s\n", user.ID, orderNumber)
-			w.WriteHeader(http.StatusOK)
-			return
-		} else {
-			log.Printf("For user %d, we can't add order: %s because we already have it for other user %d\n", user.ID, orderNumber, existingOrder.UserID)
-			w.WriteHeader(http.StatusConflict)
-			return
-		}
-	}
-
-	// Создаем новый заказ
-	order := dbconnector.Order{
-		Number: orderNumber,
-		UserID: user.ID,
-	}
-
-	// Сохраняем заказ в базе данных
-	err = ls.Storage.AddOrder(r.Context(), &order)
+	err = service.LoadOrderLogic(r.Context(), orderNumber, ls.Storage, w, user)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		// Handle the error
 		return
 	}
 
@@ -196,29 +132,17 @@ func (ls *ServerSystem) GetOrderHandler(w http.ResponseWriter, r *http.Request) 
 	}
 	log.Printf("get order call for %d\n", user.ID)
 
-	// Получаем список заказов пользователя
-	var orders []dbconnector.Order
-	err = ls.Storage.GetOrdersByUserID(r.Context(), user.ID, &orders)
+	// Конвертируем список заказов в список ответов
+	orderResponses, err := service.GetOrderLogic(r.Context(), ls.Storage, user)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	// Если список заказов пуст, возвращаем 204 No Content
-	if len(orders) == 0 {
+	if len(orderResponses) == 0 {
 		w.WriteHeader(http.StatusNoContent)
 		return
-	}
-
-	// Конвертируем список заказов в список ответов
-	orderResponses := make([]models.OrderResponse, len(orders))
-	for i, order := range orders {
-		orderResponses[i] = models.OrderResponse{
-			Number:     order.Number,
-			Status:     order.Status,
-			UploadedAt: order.CreatedAt,
-			Accrual:    order.Points,
-		}
 	}
 
 	// Возвращаем список заказов в формате JSON
@@ -236,25 +160,10 @@ func (ls *ServerSystem) GetBalanceHandler(w http.ResponseWriter, r *http.Request
 	}
 	log.Printf("get balance call for %d\n", user.ID)
 
-	// Получаем сумму использованных баллов
-	withdrawn := 0.0
-	var withdrawals []dbconnector.Withdrawal
-	err = ls.Storage.GetAddWithdrawalsByUserID(r.Context(), user.ID, &withdrawals)
+	balanceResponse, err := service.GetBalanceLogic(r.Context(), ls.Storage, user)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
-	}
-	for _, withdrawal := range withdrawals {
-		log.Printf("we have withdrawal with number %s, points %f\n", withdrawal.Number, withdrawal.Points)
-		withdrawn += withdrawal.Points
-	}
-
-	log.Printf("get balance for user %d, current %f, withdrawn %f\n", user.ID, user.Balance, withdrawn)
-
-	// Формируем ответ
-	balanceResponse := models.BalanceResponse{
-		Current:   user.Balance,
-		Withdrawn: withdrawn,
 	}
 
 	// Возвращаем ответ в формате JSON

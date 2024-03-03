@@ -15,26 +15,6 @@ import (
 	"github.com/theheadmen/goDipl2/internal/service"
 )
 
-func IsValidLuhn(number string) bool {
-	digits := len(number)
-	parity := digits % 2
-	sum := 0
-	for i := 0; i < digits; i++ {
-		digit, err := strconv.Atoi(string(number[i]))
-		if err != nil {
-			return false // Если символ не является цифрой, возвращаем false
-		}
-		if i%2 == parity {
-			digit *= 2
-			if digit > 9 {
-				digit -= 9
-			}
-		}
-		sum += digit
-	}
-	return sum%10 == 0
-}
-
 func fetchOrderInfo(ctx context.Context, storage service.Storage, ord *dbconnector.Order, baseURL string, defTimeToReturn int) (int, error) {
 	// Формируем URL запроса
 	url := fmt.Sprintf("%s/api/orders/%s", baseURL, ord.Number)

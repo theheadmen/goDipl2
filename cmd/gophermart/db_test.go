@@ -20,6 +20,7 @@ import (
 	"github.com/theheadmen/goDipl2/internal/dbconnector"
 	"github.com/theheadmen/goDipl2/internal/models"
 	"github.com/theheadmen/goDipl2/internal/server"
+	"github.com/theheadmen/goDipl2/internal/service"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -719,11 +720,11 @@ func (suite *LoyaltySystemTestSuite) TestLoyaltySystemGetWithdrawal() {
 
 func (suite *LoyaltySystemTestSuite) TestLunh() {
 	number := "3182649"
-	res := server.IsValidLuhn(number)
+	res := service.IsValidLuhn(number)
 	assert.Equal(suite.T(), true, res)
 
 	number = "11111111"
-	res = server.IsValidLuhn(number)
+	res = service.IsValidLuhn(number)
 	assert.Equal(suite.T(), false, res)
 }
 
