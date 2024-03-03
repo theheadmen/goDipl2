@@ -90,10 +90,24 @@ func (dbConnector *DBConnector) GetWaitingOrders(ctx context.Context, orders *[]
 	return result.Error
 }
 
-func (dbConnector *DBConnector) WithdrawalTransaction(ctx context.Context, order *Order, withdrawal *Withdrawal, updUser *User) error {
+func (dbConnector *DBConnector) WithdrawalTransaction(ctx context.Context, order *Order, withdrawal *Withdrawal, user *User, userEmail string, requestedSum float64, fundError error) error {
 	tx := dbConnector.DB.Begin()
 
-	result := tx.Create(&order).WithContext(ctx)
+	// мы знаем что такой пользователь есть, конкретно здесь нас интересует его баланс
+	result := tx.Where("email = ?", userEmail).First(&user).WithContext(ctx)
+	if result.Error != nil {
+		tx.Rollback()
+		return result.Error
+	}
+	// мало денег - заканчиваем, возвращаем ошибку про средства
+	if user.Balance < requestedSum {
+		tx.Commit()
+		return fundError
+	}
+	// иначе обновляем баланс, и отправляем заказ и списание
+	user.Balance -= requestedSum
+
+	result = tx.Create(&order).WithContext(ctx)
 	if result.Error != nil {
 		tx.Rollback()
 		return result.Error
@@ -105,7 +119,7 @@ func (dbConnector *DBConnector) WithdrawalTransaction(ctx context.Context, order
 		return result.Error
 	}
 
-	result = tx.Save(&updUser).WithContext(ctx)
+	result = tx.Save(&user).WithContext(ctx)
 	if result.Error != nil {
 		tx.Rollback()
 		return result.Error

@@ -279,34 +279,12 @@ func (ls *ServerSystem) WithdrawHandler(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
-
 	log.Printf("Try to minus sum: %f, for order: %s\n", withdrawRequest.Sum, withdrawRequest.Order)
 
-	// Проверяем, достаточно ли средств на счете пользователя
-	if user.Balance < withdrawRequest.Sum {
-		log.Println("but user don't have enough money")
-		http.Error(w, "Insufficient funds", http.StatusPaymentRequired)
-		return
-	}
+	err, code := service.WithdrawLogic(r.Context(), ls.Storage, user.Email, user.ID, withdrawRequest)
 
-	// Создаем новый заказ на списание
-	order := dbconnector.Order{
-		Number: withdrawRequest.Order,
-		UserID: user.ID,
-		Status: "PROCESSED", // Предполагаем, что списание сразу обрабатывается
-	}
-	// Создаем списание
-	withdrawal := dbconnector.Withdrawal{
-		Points: withdrawRequest.Sum,
-		UserID: user.ID,
-		Number: withdrawRequest.Order,
-	}
-	// Обновляем баланс пользователя
-	user.Balance -= withdrawRequest.Sum
-	// отправляем Order, withdrawal и обновляем user - но в рамках одной транзакции
-	err = ls.Storage.WithdrawalTransaction(r.Context(), &order, &withdrawal, &user)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), code)
 		return
 	}
 

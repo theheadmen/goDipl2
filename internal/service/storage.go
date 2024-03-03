@@ -19,5 +19,5 @@ type Storage interface {
 	AddWithdrawal(ctx context.Context, withdrawal *dbconnector.Withdrawal) error
 	GetAddWithdrawalsByUserID(ctx context.Context, userID uint, withdrawals *[]dbconnector.Withdrawal) error
 	GetWaitingOrders(ctx context.Context, orders *[]dbconnector.Order) error
-	WithdrawalTransaction(ctx context.Context, order *dbconnector.Order, withdrawal *dbconnector.Withdrawal, updUser *dbconnector.User) error
+	WithdrawalTransaction(ctx context.Context, order *dbconnector.Order, withdrawal *dbconnector.Withdrawal, user *dbconnector.User, userEmail string, requestedSum float64, fundError error) error
 }
