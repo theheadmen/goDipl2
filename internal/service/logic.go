@@ -10,7 +10,7 @@ import (
 	"github.com/theheadmen/goDipl2/internal/models"
 )
 
-func WithdrawLogic(ctx context.Context, storage Storage, userEmail string, userID uint, withdrawRequest models.WithdrawRequest) (error, int /*httpCode*/) {
+func WithdrawLogic(ctx context.Context, storage Storage, userEmail string, userID uint, withdrawRequest models.WithdrawRequest) (int /*httpCode*/, error) {
 	// Создаем новый заказ на списание
 	order := dbconnector.Order{
 		Number: withdrawRequest.Order,
@@ -32,8 +32,8 @@ func WithdrawLogic(ctx context.Context, storage Storage, userEmail string, userI
 	if err == fundError {
 		// отдельный код для недостатка средств
 		log.Println("but user don't have enough money")
-		return fundError, http.StatusPaymentRequired
+		return http.StatusPaymentRequired, fundError
 	}
 
-	return err, http.StatusInternalServerError // обычный код для ошибки
+	return http.StatusInternalServerError, err // обычный код для ошибки
 }

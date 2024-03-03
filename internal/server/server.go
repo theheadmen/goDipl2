@@ -281,7 +281,7 @@ func (ls *ServerSystem) WithdrawHandler(w http.ResponseWriter, r *http.Request) 
 	}
 	log.Printf("Try to minus sum: %f, for order: %s\n", withdrawRequest.Sum, withdrawRequest.Order)
 
-	err, code := service.WithdrawLogic(r.Context(), ls.Storage, user.Email, user.ID, withdrawRequest)
+	code, err := service.WithdrawLogic(r.Context(), ls.Storage, user.Email, user.ID, withdrawRequest)
 
 	if err != nil {
 		http.Error(w, err.Error(), code)
