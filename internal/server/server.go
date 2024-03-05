@@ -9,6 +9,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/theheadmen/goDipl2/internal/dbconnector"
+	"github.com/theheadmen/goDipl2/internal/errors"
 	"github.com/theheadmen/goDipl2/internal/models"
 	"github.com/theheadmen/goDipl2/internal/service"
 )
@@ -53,8 +54,9 @@ func (ls *ServerSystem) RegisterUserHandler(w http.ResponseWriter, r *http.Reque
 	}
 	log.Printf("try to register with email: %s, and password: %s\n", user.Email, user.Password)
 
+	logicSystem := service.LogicSystem{Ctx: r.Context(), Storage: ls.Storage, User: &user}
 	// Сохраняем пользователя в базе данных
-	errorCode, err := service.RegisterUserLogic(r.Context(), ls.Storage, user)
+	errorCode, err := logicSystem.RegisterUserLogic()
 	if err != nil {
 		http.Error(w, err.Error(), errorCode)
 		return
@@ -79,7 +81,8 @@ func (ls *ServerSystem) LoginUserHandler(w http.ResponseWriter, r *http.Request)
 	}
 	log.Printf("try to login with email: %s, and password: %s\n", reqUser.Email, reqUser.Password)
 
-	respCode, err := service.LoginUserLogic(r.Context(), ls.Storage, reqUser)
+	logicSystem := service.LogicSystem{Ctx: r.Context(), Storage: ls.Storage, User: &reqUser}
+	respCode, err := logicSystem.LoginUserLogic()
 	if err != nil {
 		http.Error(w, err.Error(), respCode)
 		return
@@ -96,8 +99,7 @@ func (ls *ServerSystem) LoginUserHandler(w http.ResponseWriter, r *http.Request)
 }
 
 func (ls *ServerSystem) LoadOrderHandler(w http.ResponseWriter, r *http.Request) {
-	var user dbconnector.User
-	err := ls.AuthenticateUser(w, r, &user)
+	user, err := ls.AuthenticateUser(w, r)
 	if err != nil {
 		// Handle the error
 		return
@@ -112,9 +114,25 @@ func (ls *ServerSystem) LoadOrderHandler(w http.ResponseWriter, r *http.Request)
 	}
 	orderNumber := string(body)
 
-	err = service.LoadOrderLogic(r.Context(), orderNumber, ls.Storage, w, user)
+	logicSystem := service.LogicSystem{Ctx: r.Context(), Storage: ls.Storage, User: user}
+	err = logicSystem.LoadOrderLogic(orderNumber)
 	if err != nil {
-		// Handle the error
+		if err == errors.ErrInvalidOrderNumber {
+			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+			return
+		}
+		// заказ есть, для этого пользователя
+		if err == errors.ErrAlreadyHaveOrder {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		// заказ есть, для другого пользователя
+		if err == errors.ErrAlreadyHaveOrderForOtherUser {
+			w.WriteHeader(http.StatusConflict)
+			return
+		}
+		// любая другая ошибка
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -124,16 +142,16 @@ func (ls *ServerSystem) LoadOrderHandler(w http.ResponseWriter, r *http.Request)
 }
 
 func (ls *ServerSystem) GetOrderHandler(w http.ResponseWriter, r *http.Request) {
-	var user dbconnector.User
-	err := ls.AuthenticateUser(w, r, &user)
+	user, err := ls.AuthenticateUser(w, r)
 	if err != nil {
 		// Handle the error
 		return
 	}
 	log.Printf("get order call for %d\n", user.ID)
 
+	logicSystem := service.LogicSystem{Ctx: r.Context(), Storage: ls.Storage, User: user}
 	// Конвертируем список заказов в список ответов
-	orderResponses, err := service.GetOrderLogic(r.Context(), ls.Storage, user)
+	orderResponses, err := logicSystem.GetOrderLogic()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -152,15 +170,14 @@ func (ls *ServerSystem) GetOrderHandler(w http.ResponseWriter, r *http.Request) 
 }
 
 func (ls *ServerSystem) GetBalanceHandler(w http.ResponseWriter, r *http.Request) {
-	var user dbconnector.User
-	err := ls.AuthenticateUser(w, r, &user)
+	user, err := ls.AuthenticateUser(w, r)
 	if err != nil {
 		// Handle the error
 		return
 	}
 	log.Printf("get balance call for %d\n", user.ID)
-
-	balanceResponse, err := service.GetBalanceLogic(r.Context(), ls.Storage, user)
+	logicSystem := service.LogicSystem{Ctx: r.Context(), Storage: ls.Storage, User: user}
+	balanceResponse, err := logicSystem.GetBalanceLogic()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -173,8 +190,7 @@ func (ls *ServerSystem) GetBalanceHandler(w http.ResponseWriter, r *http.Request
 }
 
 func (ls *ServerSystem) WithdrawHandler(w http.ResponseWriter, r *http.Request) {
-	var user dbconnector.User
-	err := ls.AuthenticateUser(w, r, &user)
+	user, err := ls.AuthenticateUser(w, r)
 	if err != nil {
 		// Handle the error
 		return
@@ -189,8 +205,8 @@ func (ls *ServerSystem) WithdrawHandler(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	log.Printf("Try to minus sum: %f, for order: %s\n", withdrawRequest.Sum, withdrawRequest.Order)
-
-	code, err := service.WithdrawLogic(r.Context(), ls.Storage, user.Email, user.ID, withdrawRequest)
+	logicSystem := service.LogicSystem{Ctx: r.Context(), Storage: ls.Storage, User: user}
+	code, err := logicSystem.WithdrawLogic(withdrawRequest)
 
 	if err != nil {
 		http.Error(w, err.Error(), code)
@@ -201,8 +217,7 @@ func (ls *ServerSystem) WithdrawHandler(w http.ResponseWriter, r *http.Request) 
 }
 
 func (ls *ServerSystem) GetWithdrawalsHandler(w http.ResponseWriter, r *http.Request) {
-	var user dbconnector.User
-	err := ls.AuthenticateUser(w, r, &user)
+	user, err := ls.AuthenticateUser(w, r)
 	if err != nil {
 		// Handle the error
 		return
@@ -210,28 +225,17 @@ func (ls *ServerSystem) GetWithdrawalsHandler(w http.ResponseWriter, r *http.Req
 	log.Printf("get withdraw call for %d\n", user.ID)
 
 	// Получаем список выводов средств пользователя
-	var withdrawals []dbconnector.Withdrawal
-	err = ls.Storage.GetAddWithdrawalsByUserID(r.Context(), user.ID, &withdrawals)
+	logicSystem := service.LogicSystem{Ctx: r.Context(), Storage: ls.Storage, User: user}
+	withdrawalResponses, err := logicSystem.GetWithdrawalsLogic()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	// Если список выводов пуст, возвращаем 204 No Content
-	if len(withdrawals) == 0 {
+	if len(withdrawalResponses) == 0 {
 		w.WriteHeader(http.StatusNoContent)
 		return
-	}
-
-	// Конвертируем список выводов в список ответов
-	withdrawalResponses := make([]models.WithdrawalResponse, len(withdrawals))
-	for i, withdrawal := range withdrawals {
-		log.Printf("get withdrawal with number %s, points %f\n", withdrawal.Number, withdrawal.Points)
-		withdrawalResponses[i] = models.WithdrawalResponse{
-			Order:       withdrawal.Number,
-			Sum:         withdrawal.Points,
-			ProcessedAt: withdrawal.CreatedAt,
-		}
 	}
 
 	// Возвращаем список выводов в формате JSON
@@ -241,20 +245,20 @@ func (ls *ServerSystem) GetWithdrawalsHandler(w http.ResponseWriter, r *http.Req
 }
 
 // AuthenticateUser authenticates the user and looks up the user in the database.
-func (ls *ServerSystem) AuthenticateUser(w http.ResponseWriter, r *http.Request, user *dbconnector.User) error {
+func (ls *ServerSystem) AuthenticateUser(w http.ResponseWriter, r *http.Request) (*dbconnector.User, error) {
 	// Проверяем аутентификацию пользователя
 	cookie, err := r.Cookie("session_token")
 	if err != nil {
 		http.Error(w, "User not authenticated", http.StatusUnauthorized)
-		return err
+		return &dbconnector.User{}, err
 	}
 
 	// Ищем пользователя в базе данных
-	err = ls.Storage.GetUserByEmail(r.Context(), cookie.Value, user)
+	user, err := ls.Storage.GetUserByEmail(r.Context(), cookie.Value)
 	if err != nil {
 		http.Error(w, "User not found", http.StatusUnauthorized)
-		return err
+		return &user, err
 	}
 
-	return nil
+	return &user, nil
 }

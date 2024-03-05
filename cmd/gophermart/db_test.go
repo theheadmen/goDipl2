@@ -176,18 +176,16 @@ func (suite *LoyaltySystemTestSuite) TestLoyaltySystemLoadOrder() {
 			if tc.withExistingOrder {
 				if tc.existingOrderForSameUser {
 					// Нам нужно узнать какой id система дала этому user
-					var user dbconnector.User
-					err = suite.db.GetUserByEmail(suite.ctx, tc.user.Email, &user)
+					user, err := suite.db.GetUserByEmail(suite.ctx, tc.user.Email)
 					require.NoError(t, err)
 					tc.existingOrder.UserID = user.ID
-					err := suite.db.AddOrder(suite.ctx, &tc.existingOrder)
+					err = suite.db.AddOrder(suite.ctx, &tc.existingOrder)
 					require.NoError(t, err)
 				} else {
 					err := suite.db.AddUser(suite.ctx, &tc.secondUser)
 					require.NoError(t, err)
 					// Нам нужно узнать какой id система дала этому user
-					var user dbconnector.User
-					err = suite.db.GetUserByEmail(suite.ctx, tc.secondUser.Email, &user)
+					user, err := suite.db.GetUserByEmail(suite.ctx, tc.secondUser.Email)
 					require.NoError(t, err)
 					tc.existingOrder.UserID = user.ID
 					err = suite.db.AddOrder(suite.ctx, &tc.existingOrder)
@@ -437,8 +435,7 @@ func (suite *LoyaltySystemTestSuite) TestLoyaltySystemGetOrder() {
 			err := suite.db.AddUser(suite.ctx, &tc.user)
 			require.NoError(t, err)
 			// Нам нужно узнать какой id система дала этому user
-			var user dbconnector.User
-			err = suite.db.GetUserByEmail(suite.ctx, tc.user.Email, &user)
+			user, err := suite.db.GetUserByEmail(suite.ctx, tc.user.Email)
 			require.NoError(t, err)
 			for _, w := range tc.orders {
 				// назначаем реальный userID
@@ -531,8 +528,7 @@ func (suite *LoyaltySystemTestSuite) TestLoyaltySystemGetBalance() {
 			err := suite.db.AddUser(suite.ctx, &tc.user)
 			require.NoError(t, err)
 			// Нам нужно узнать какой id система дала этому user
-			var user dbconnector.User
-			err = suite.db.GetUserByEmail(suite.ctx, tc.user.Email, &user)
+			user, err := suite.db.GetUserByEmail(suite.ctx, tc.user.Email)
 			require.NoError(t, err)
 			for _, w := range tc.withdrawals {
 				// назначаем реальный userID
@@ -676,8 +672,7 @@ func (suite *LoyaltySystemTestSuite) TestLoyaltySystemGetWithdrawal() {
 			err := suite.db.AddUser(suite.ctx, &tc.user)
 			require.NoError(t, err)
 			// Нам нужно узнать какой id система дала этому user
-			var user dbconnector.User
-			err = suite.db.GetUserByEmail(suite.ctx, tc.user.Email, &user)
+			user, err := suite.db.GetUserByEmail(suite.ctx, tc.user.Email)
 			require.NoError(t, err)
 			for _, w := range tc.withdrawals {
 				// назначаем реальный userID

@@ -8,9 +8,16 @@ import (
 	"strconv"
 
 	"github.com/theheadmen/goDipl2/internal/dbconnector"
+	"github.com/theheadmen/goDipl2/internal/errors"
 	"github.com/theheadmen/goDipl2/internal/models"
 	"golang.org/x/crypto/bcrypt"
 )
+
+type LogicSystem struct {
+	Ctx     context.Context
+	Storage Storage
+	User    *dbconnector.User
+}
 
 func IsValidLuhn(number string) bool {
 	digits := len(number)
@@ -32,39 +39,37 @@ func IsValidLuhn(number string) bool {
 	return sum%10 == 0
 }
 
-func WithdrawLogic(ctx context.Context, storage Storage, userEmail string, userID uint, withdrawRequest models.WithdrawRequest) (int /*httpCode*/, error) {
+func (ls *LogicSystem) WithdrawLogic(withdrawRequest models.WithdrawRequest) (int /*httpCode*/, error) {
 	// Создаем новый заказ на списание
 	order := dbconnector.Order{
 		Number: withdrawRequest.Order,
-		UserID: userID,
+		UserID: ls.User.ID,
 		Status: "PROCESSED", // Предполагаем, что списание сразу обрабатывается
 	}
 	// Создаем списание
 	withdrawal := dbconnector.Withdrawal{
 		Points: withdrawRequest.Sum,
-		UserID: userID,
+		UserID: ls.User.ID,
 		Number: withdrawRequest.Order,
 	}
 
-	fundError := fmt.Errorf("insufficient funds")
-	var user dbconnector.User
+	var checkedUser dbconnector.User
 	// отправляем Order, withdrawal и обновляем user - но в рамках одной транзакции
-	err := storage.WithdrawalTransaction(ctx, &order, &withdrawal, &user, userEmail, withdrawRequest.Sum, fundError)
+	err := ls.Storage.WithdrawalTransaction(ls.Ctx, &order, &withdrawal, &checkedUser, ls.User.Email, withdrawRequest.Sum)
 
-	if err == fundError {
+	if err == errors.ErrInsufficientFunds {
 		// отдельный код для недостатка средств
 		log.Println("but user don't have enough money")
-		return http.StatusPaymentRequired, fundError
+		return http.StatusPaymentRequired, err
 	}
 
 	return http.StatusInternalServerError, err // обычный код для ошибки
 }
 
-func GetBalanceLogic(ctx context.Context, storage Storage, user dbconnector.User) (models.BalanceResponse, error) {
+func (ls *LogicSystem) GetBalanceLogic() (models.BalanceResponse, error) {
 	// Получаем сумму использованных баллов
 	withdrawn := 0.0
-	var withdrawals []dbconnector.Withdrawal
-	err := storage.GetAddWithdrawalsByUserID(ctx, user.ID, &withdrawals)
+	withdrawals, err := ls.Storage.GetAddWithdrawalsByUserID(ls.Ctx, ls.User.ID)
 	if err != nil {
 		return models.BalanceResponse{}, err
 	}
@@ -74,21 +79,42 @@ func GetBalanceLogic(ctx context.Context, storage Storage, user dbconnector.User
 		withdrawn += withdrawal.Points
 	}
 
-	log.Printf("get balance for user %d, current %f, withdrawn %f\n", user.ID, user.Balance, withdrawn)
+	log.Printf("get balance for ls.User %d, current %f, withdrawn %f\n", ls.User.ID, ls.User.Balance, withdrawn)
 
 	// Формируем ответ
 	balanceResponse := models.BalanceResponse{
-		Current:   user.Balance,
+		Current:   ls.User.Balance,
 		Withdrawn: withdrawn,
 	}
 
 	return balanceResponse, nil
 }
 
-func GetOrderLogic(ctx context.Context, storage Storage, user dbconnector.User) ([]models.OrderResponse, error) {
+func (ls *LogicSystem) GetWithdrawalsLogic() ([]models.WithdrawalResponse, error) {
+	// Получаем список выводов средств пользователя
+	withdrawals, err := ls.Storage.GetAddWithdrawalsByUserID(ls.Ctx, ls.User.ID)
+	if err != nil {
+		//http.Error(w, err.Error(), http.StatusInternalServerError)
+		return []models.WithdrawalResponse{}, err
+	}
+
+	// Конвертируем список выводов в список ответов
+	withdrawalResponses := make([]models.WithdrawalResponse, len(withdrawals))
+	for i, withdrawal := range withdrawals {
+		log.Printf("get withdrawal with number %s, points %f\n", withdrawal.Number, withdrawal.Points)
+		withdrawalResponses[i] = models.WithdrawalResponse{
+			Order:       withdrawal.Number,
+			Sum:         withdrawal.Points,
+			ProcessedAt: withdrawal.CreatedAt,
+		}
+	}
+
+	return withdrawalResponses, nil
+}
+
+func (ls *LogicSystem) GetOrderLogic() ([]models.OrderResponse, error) {
 	// Получаем список заказов пользователя
-	var orders []dbconnector.Order
-	err := storage.GetOrdersByUserID(ctx, user.ID, &orders)
+	orders, err := ls.Storage.GetOrdersByUserID(ls.Ctx, ls.User.ID)
 	if err != nil {
 		return []models.OrderResponse{}, err
 	}
@@ -107,64 +133,59 @@ func GetOrderLogic(ctx context.Context, storage Storage, user dbconnector.User) 
 	return orderResponses, nil
 }
 
-func LoadOrderLogic(ctx context.Context, orderNumber string, storage Storage, w http.ResponseWriter, user dbconnector.User) error {
+func (ls *LogicSystem) LoadOrderLogic(orderNumber string) error {
 	// Проверяем корректность номера заказа
 	if !IsValidLuhn(orderNumber) {
-		log.Printf("For user %d, get incorrect order: %s\n", user.ID, orderNumber)
-		http.Error(w, "Invalid order number format", http.StatusUnprocessableEntity)
-		return fmt.Errorf("invalid order number format")
+		log.Printf("For ls.User %d, get incorrect order: %s\n", ls.User.ID, orderNumber)
+		return errors.ErrInvalidOrderNumber
 	}
 
-	log.Printf("For user %d, get new order: %s\n", user.ID, orderNumber)
+	log.Printf("For ls.User %d, get new order: %s\n", ls.User.ID, orderNumber)
 
 	// Проверяем, не был ли загружен этот заказ другим пользователем
-	var existingOrder dbconnector.Order
-	err := storage.GetOrderByNumber(ctx, orderNumber, &existingOrder)
-	if err == nil {
-		if existingOrder.UserID == user.ID {
-			log.Printf("For user %d, we already have order: %s\n", user.ID, orderNumber)
-			w.WriteHeader(http.StatusOK)
-			return fmt.Errorf("we already have order")
+	isOrderExist, existingOrder, err := ls.Storage.GetOrderByNumber(ls.Ctx, orderNumber)
+	if err != nil {
+		return err
+	}
+
+	if isOrderExist {
+		if existingOrder.UserID == ls.User.ID {
+			log.Printf("For user %d, we already have order: %s\n", ls.User.ID, orderNumber)
+			return errors.ErrAlreadyHaveOrder
 		} else {
-			log.Printf("For user %d, we can't add order: %s because we already have it for other user %d\n", user.ID, orderNumber, existingOrder.UserID)
-			w.WriteHeader(http.StatusConflict)
-			return fmt.Errorf("already have order for other user")
+			log.Printf("For user %d, we can't add order: %s because we already have it for other user %d\n", ls.User.ID, orderNumber, existingOrder.UserID)
+			return errors.ErrAlreadyHaveOrderForOtherUser
 		}
 	}
 
 	// Создаем новый заказ
 	order := dbconnector.Order{
 		Number: orderNumber,
-		UserID: user.ID,
+		UserID: ls.User.ID,
 	}
 
 	// Сохраняем заказ в базе данных
-	err = storage.AddOrder(ctx, &order)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return err
-	}
+	err = ls.Storage.AddOrder(ls.Ctx, &order)
 
-	return nil
+	return err
 }
 
-func LoginUserLogic(ctx context.Context, storage Storage, reqUser dbconnector.User) (int /*responce code*/, error) {
+func (ls *LogicSystem) LoginUserLogic() (int /*responce code*/, error) {
 	// Проверяем, что логин и пароль не пустые
-	if reqUser.Email == "" || reqUser.Password == "" {
+	if ls.User.Email == "" || ls.User.Password == "" {
 		log.Println("Login and password are required")
 		return http.StatusBadRequest, fmt.Errorf("login and password are required")
 	}
 
 	// Ищем пользователя в базе данных
-	var user dbconnector.User
-	err := storage.GetUserByEmail(ctx, reqUser.Email, &user)
+	checkedUser, err := ls.Storage.GetUserByEmail(ls.Ctx, ls.User.Email)
 	if err != nil {
 		log.Println("Invalid login or password")
 		return http.StatusUnauthorized, fmt.Errorf("invalid login or password")
 	}
 
 	// Проверяем пароль
-	err = bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(reqUser.Password))
+	err = bcrypt.CompareHashAndPassword([]byte(checkedUser.Password), []byte(ls.User.Password))
 	if err != nil {
 		log.Println("Invalid login or password")
 		return http.StatusUnauthorized, fmt.Errorf("invalid login or password")
@@ -173,21 +194,21 @@ func LoginUserLogic(ctx context.Context, storage Storage, reqUser dbconnector.Us
 	return 0, nil
 }
 
-func RegisterUserLogic(ctx context.Context, storage Storage, user dbconnector.User) (int /*responce code*/, error) {
+func (ls *LogicSystem) RegisterUserLogic() (int /*responce code*/, error) {
 	// Проверяем, что логин и пароль не пустые
-	if user.Email == "" || user.Password == "" {
+	if ls.User.Email == "" || ls.User.Password == "" {
 		return http.StatusBadRequest, fmt.Errorf("login and password are required")
 	}
 
 	// Хешируем пароль
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(user.Password), bcrypt.DefaultCost)
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(ls.User.Password), bcrypt.DefaultCost)
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}
-	user.Password = string(hashedPassword)
+	ls.User.Password = string(hashedPassword)
 
 	// Сохраняем пользователя в базе данных
-	err = storage.AddUser(ctx, &user)
+	err = ls.Storage.AddUser(ls.Ctx, ls.User)
 	if err != nil {
 		return http.StatusConflict, err
 	}

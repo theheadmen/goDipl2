@@ -78,8 +78,7 @@ func fetchOrderInfo(ctx context.Context, storage service.Storage, ord *dbconnect
 
 	// Если Accrual не пустое, обновляем Balance у User
 	if orderResponse.Accrual > 0 {
-		var user dbconnector.User
-		err = storage.GetUserByUserID(ctx, ord.UserID, &user)
+		user, err := storage.GetUserByUserID(ctx, ord.UserID)
 		if err != nil {
 			return defTimeToReturn, fmt.Errorf("ошибка при поиске пользователя: %w", err)
 		}
@@ -104,9 +103,8 @@ func fetchOrderInfo(ctx context.Context, storage service.Storage, ord *dbconnect
 }
 
 func processOrders(ctx context.Context, storage service.Storage, baseURL string, defTimeToReturn int) time.Duration {
-	var orders []dbconnector.Order
 	// берем все заказы которые еще ждут выполнения
-	err := storage.GetWaitingOrders(ctx, &orders)
+	orders, err := storage.GetWaitingOrders(ctx)
 	if err != nil {
 		fmt.Printf("ошибка при запросе ORDERS из бд: %+v", err)
 		return time.Duration(defTimeToReturn) * time.Second
